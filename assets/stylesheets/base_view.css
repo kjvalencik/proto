@@ -1,0 +1,19 @@
+body {
+	padding: 100px 0 50px 0;
+}
+
+.loading,
+.loading-indicator {
+	display: block;
+}
+
+.loading {
+	opacity: 0.5;
+}
+
+.loading-indicator {
+	display: none;
+	float: right;
+	color: #fff;
+	line-height: 40px;
+}

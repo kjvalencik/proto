@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+
+	<head>
+		<meta charset='utf-8'/>
+		<title>Proto</title>
+
+		<link href="/styles.css" media="screen" rel="stylesheet" type="text/css" />
+	</head>
+
+	<body class="">
+		<div class="navbar navbar-fixed-top">
+			<div class="navbar-inner">
+				<div class="container">
+					<a class="brand" href="/">Proto</a>
+					<div class="nav-collapse collapse">
+						<ul class="nav">
+							<li class="active"><a href="/">Home</a></li>
+							{{! Use a "." relative path to defeat push state. }}
+							<li><a href="./forums">Forums</a></li>
+						</ul>
+					</div>
+					<div class="loading-indicator">Loading&hellip;</div>
+				</div>
+			</div>
+		</div>
+
+		<section id=content class=container>
+			{{{body}}}
+		</section>
+
+		<script src="/mergedAssets.js"></script>
+		<script>
+		(function() {
+			var App = window.App = new (require('app/app'))({{json appData}});
+			App.bootstrapData({{json bootstrappedData}});
+			App.start();
+		})();
+		</script>
+
+	</body>
+
+</html>
