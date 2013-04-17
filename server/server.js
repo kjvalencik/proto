@@ -8,8 +8,6 @@ var express     = require('express'),
 	rendrServer = require('rendr').server,
 	rendrMw     = require('rendr/server/middleware'),
 	viewEngine  = require('rendr/server/viewEngine'),
-	HttpProxy   = require('http-proxy'),
-	proxy       = new HttpProxy.RoutingProxy(),
 	app;
 
 app = express();
@@ -19,12 +17,6 @@ app = express();
 //
 exports.init = function init(options, callback) {
 	initMiddleware();
-
-	// Proxy all forum traffic
-	// TODO: Do this in Nginx
-	app.all('/forums*', function (req, res) {
-		proxy.proxyRequest(req, res, env.current.forum);
-	});
 
 	initLibs(function(err, result) {
 		if (err) return callback(err);
