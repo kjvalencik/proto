@@ -7312,8 +7312,6 @@ body {
 }
 
 .loading-indicator {
+	margin-top: 10px;
 	display: none;
-	float: right;
-	color: #fff;
-	line-height: 40px;
 }

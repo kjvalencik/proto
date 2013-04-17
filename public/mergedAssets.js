@@ -4339,13 +4339,25 @@ return templates;
 
 };}, "app/views/app_view": function(exports, require, module) {var BaseAppView = require('rendr/shared/base/app_view');
 
-var $body = $('body');
+var $body    = $('body'),
+	$loading = $('.loading-indicator');
 
 module.exports = BaseAppView.extend({
-	postInitialize: function() {
+	events : {
+		"click .forums-link"              : "enableLoading",
+		"click .navbar-fixed-top .nav li" : "switchNav"
+	},
+	postInitialize : function() {
 		this.app.on('change:loading', function(app, loading) {
 			$body.toggleClass('loading', loading);
 		}, this);
+	},
+	enableLoading : function (e) {
+		$loading.show();
+	},
+	switchNav : function (e) {
+		$(e.currentTarget).addClass('active')
+			.siblings().removeClass('active');
 	}
 });
 }, "app/views/base_view": function(exports, require, module) {var RendrView = require('rendr/shared/base/view');
