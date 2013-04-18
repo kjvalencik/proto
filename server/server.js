@@ -41,6 +41,10 @@ exports.start = function start(options) {
 //
 function initMiddleware() {
 	app.configure(function() {
+		// TODO: Remove this in production
+		// Test controller for trying stuff out
+		require('./test-route')(app);
+
 		// set up views
 		app.set('views', __dirname + '/../app/views');
 		app.set('view engine', 'js');
