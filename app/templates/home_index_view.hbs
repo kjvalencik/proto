@@ -1,2 +1,7 @@
 <h1>Wecome to Proto!</h1>
+
+{{#if this._app.attributes.user.authenticated}}
+<p>Hello, {{this._app.attributes.user.name}}!</p>
+{{else}}
 <p>Work in progress.</p>
+{{/if}}

@@ -1,13 +1,16 @@
 //
 // Home of the main server object
 //
-var express     = require('express'),
-	env         = require('./lib/env'),
-	mw          = require('./middleware'),
-	DataAdapter = require('./lib/data_adapter'),
-	rendrServer = require('rendr').server,
-	rendrMw     = require('rendr/server/middleware'),
-	viewEngine  = require('rendr/server/viewEngine'),
+var express       = require('express'),
+	env           = require('./lib/env'),
+	vanillaConfig = require('./lib/vanillaConfig'),
+	mw            = require('./middleware'),
+	DataAdapter   = require('./lib/data_adapter'),
+	rendrServer   = require('rendr').server,
+	rendrMw       = require('rendr/server/middleware'),
+	viewEngine    = require('rendr/server/viewEngine'),
+	Sequelize     = require("sequelize"),
+	sequelize,
 	app;
 
 app = express();
@@ -16,6 +19,18 @@ app = express();
 // Initialize our server
 //
 exports.init = function init(options, callback) {
+	var vanillaConf = vanillaConfig(env.current.vanillaConf);
+	env.current.vanillaConf = vanillaConf;
+	sequelize = new Sequelize(vanillaConf.Database.Name, vanillaConf.Database.User,
+		vanillaConf.Database.Password, { host : vanillaConf.Database.Host, timestamps : false });
+
+	// TODO: Use an appropriate session store
+	app.use(express.cookieParser());
+	app.use(express.session({
+		store: new express.session.MemoryStore(),
+		secret : 'My super secret session secret.'
+	}));
+
 	initMiddleware();
 
 	initLibs(function(err, result) {
@@ -41,18 +56,19 @@ exports.start = function start(options) {
 //
 function initMiddleware() {
 	app.configure(function() {
-		// TODO: Remove this in production
-		// Test controller for trying stuff out
-		require('./test-route')(app);
-
 		// set up views
 		app.set('views', __dirname + '/../app/views');
 		app.set('view engine', 'js');
 		app.engine('js', viewEngine);
 
-		// set the middleware stack
+		// Static routes
 		app.use(express.compress());
 		app.use(express.static(__dirname + '/../public'));
+
+		// Enable passport
+		mw.vanillaAuth(app, sequelize, env);
+
+		// set the middleware stack
 		app.use(express.logger());
 		app.use(express.bodyParser());
 		app.use(app.router);
@@ -86,7 +102,21 @@ function buildRoutes(app) {
 // Insert these methods before Rendr method chain for all routes, plus API.
 var preRendrMiddleware = [
 	// Initialize Rendr app, and pass in any config as app attributes.
-	rendrMw.initApp(env.current.rendrApp)
+	// Initialize Rendr app, and pass in any config as app attributes.
+	// TODO: Remove this hack of loading in session data with app data
+	function (req, res, next) {
+		var userData = { authenticated : req.isAuthenticated() },
+			data = { user : userData },
+			user;
+
+		if (userData.authenticated) {
+			userData.name = req.user.Name;
+		}
+
+		rendrMw.initApp(_.extend({
+			user : userData
+		}, env.current.rendrApp))(req, res, next);
+	}
 ];
 
 function buildApiRoutes(app) {

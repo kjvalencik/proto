@@ -9,9 +9,6 @@ exports.config = {
 			pathPrefix : ''
 		}
 	},
-	forum : {
-		host : "localhost",
-		port : "8081"
-	},
+	vanillaConf : '',
 	rendrApp : {}
 };
