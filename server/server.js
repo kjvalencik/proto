@@ -22,14 +22,11 @@ exports.init = function init(options, callback) {
 	var vanillaConf = vanillaConfig(env.current.vanillaConf);
 	env.current.vanillaConf = vanillaConf;
 	sequelize = new Sequelize(vanillaConf.Database.Name, vanillaConf.Database.User,
-		vanillaConf.Database.Password, { host : vanillaConf.Database.Host, timestamps : false });
-
-	// TODO: Use an appropriate session store
-	app.use(express.cookieParser());
-	app.use(express.session({
-		store: new express.session.MemoryStore(),
-		secret : 'My super secret session secret.'
-	}));
+		vanillaConf.Database.Password, {
+		host       : vanillaConf.Database.Host,
+		logging    : false,
+		timestamps : false
+	});
 
 	initMiddleware();
 
@@ -66,7 +63,8 @@ function initMiddleware() {
 		app.use(express.staticCache());
 		app.use(express.static(__dirname + '/../public'));
 
-		// Enable passport
+		// Middleware to share authentication state with vanilla
+		app.use(express.cookieParser());
 		mw.vanillaAuth(app, sequelize, env);
 
 		// set the middleware stack

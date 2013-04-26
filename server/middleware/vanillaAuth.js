@@ -1,9 +1,7 @@
 // TODO: Use the ORM built into sequelize
 module.exports = function (app, sequelize, env) {
-	var vanillaCrypt  = require('../lib/vanillaCrypt')(env.current.vanillaConf.Garden.Cookie.Salt),
-		cookieParser  = require('cookie'),
-		passport      = require('passport'),
-		LocalStrategy = require('passport-local').Strategy;
+	var vanillaHash = require('vanilla-hash')(env.current.vanillaConf.Garden.Cookie.Salt, 'md5'),
+		cookieName = 'Vanilla';
 
 	function findUser(id, cb) {
 		id = parseInt(id, 10);
@@ -13,72 +11,76 @@ module.exports = function (app, sequelize, env) {
 			return cb();
 		}
 
-		sequelize.query('SELECT * FROM GDN_User WHERE UserID = ' + id)
+		sequelize.query('SELECT * FROM GDN_User WHERE UserID = ' + id + ' LIMIT 1')
 		.success(function (users) {
 			cb(users[0]);
 		});
 	};
 
-	// Configure passport persistence functions
-	// TODO: Serialize the entire user and add functionality
-	// to keep in sync.
-	// TODO: Error handling when user isn't found
-	passport.serializeUser(function (user, done) {
-		done(null, { UserID : user.UserID });
-	});
-	passport.deserializeUser(function(user, done) {
-		findUser(user.UserID, function (user) {
-			done(null, user);
-		});
-	});
-
-	app.use(passport.initialize());
-	app.use(passport.session());
-
 	// Middleware to look for cookies and login if necessary
-	app.use(function (req, res, next){
-		var cookies = cookieParser.parse(req.headers.cookie),
-			cookie = cookies.Vanilla,
-			volatileCookie = cookies['Vanilla-Volatile'],
-			userId;
+	app.use(function (req, res, next) {
+		var cookie = req.cookies[cookieName],
+			isAuthenticated = false,
+			ts, userId;
+		req.user = {};
+
+		// Convenience functions
+		req.isAuthenticated = function () {
+			return isAuthenticated;
+		};
+		req.login = function (userId, callback) {
+			findUser(userId, function (user) {
+				// Couldn't find the user
+				if (!user) {
+					res.clearCookie(cookieName);
+					return callback("Couldn't find the user.");
+				}
+
+				// Everything went swell, login!
+				isAuthenticated = true;
+				req.user = user;
+				return callback(null, user);
+			});
+		};
+		req.logIn = req.login;
+		req.logout = function () {
+			isAuthenticated = false;
+			req.user = {};
+			res.clearCookie(cookieName);
+		};
+		req.logOut = req.logout;
 
 		// Missing a cookie, abort!
-		if (cookie === undefined || volatileCookie === undefined) {
-			req.logout();
+		if (cookie === undefined) {
 			return next();
 		}
 
-		// Get the user from the cookie (and validate the hash)
-		userId = vanillaCrypt.checkCookie(cookie);
-		if (!userId) {
-			req.logout();
+		// Check the cookie for tampering
+		if (!vanillaHash.checkCookie(cookie)) {
+			res.clearCookie(cookieName);
 			return next();
 		}
 
-		// If we are logged in, but our userId doesn't match the
-		// one in the cookie, logout first.
-		if (req.isAuthenticated() && req.user.UserID.toString() !== userId.toString()) {
-			req.logout();
-		}
-
-		// If we are authenticated, don't re-authenticate
-		if (req.isAuthenticated()) {
+		// Check that we have a valid cookie
+		cookie = cookie.split("|");
+		if (cookie.length < 5) {
+			res.clearCookie(cookieName);
 			return next();
 		}
 
-		// Find the user in the database
-		findUser(userId, function (user) {
-			// Couldn't find the user
-			if (!user) {
-				return next();
+		// Check if the login expired
+		ts = parseInt(cookie.pop(), 10);
+		if (isNaN(ts) || ts < ((new Date()).getTime() / 1000)) {
+			res.clearCookie(cookieName);
+			return next();
+		}
+
+		// Login
+		req.login(cookie.pop(), function (err, user) {
+			if (err || !user) {
+				res.clearCookie(cookieName);
 			}
-			// Everything went swell, login!
-			req.login(user, function (err) {
-				if (err) {
-					return next(err);
-				}
-				next();
-			});
+			next();
 		});
 	});
 };
