@@ -1,7 +1,7 @@
 // TODO: Use the ORM built into sequelize
 module.exports = function (app, sequelize, env) {
-	var vanillaHash   = require('vanilla-hash')(env.current.vanillaConf.Garden.Cookie.Salt, 'md5'),
-		cookieParser  = require('cookie');
+	var vanillaHash = require('vanilla-hash')(env.current.vanillaConf.Garden.Cookie.Salt, 'md5'),
+		cookieName = 'Vanilla';
 
 	function findUser(id, cb) {
 		id = parseInt(id, 10);
@@ -11,7 +11,7 @@ module.exports = function (app, sequelize, env) {
 			return cb();
 		}
 
-		sequelize.query('SELECT * FROM GDN_User WHERE UserID = ' + id)
+		sequelize.query('SELECT * FROM GDN_User WHERE UserID = ' + id + ' LIMIT 1')
 		.success(function (users) {
 			cb(users[0]);
 		});
@@ -19,39 +19,68 @@ module.exports = function (app, sequelize, env) {
 
 	// Middleware to look for cookies and login if necessary
 	app.use(function (req, res, next) {
-		var cookies = cookieParser.parse(req.headers.cookie),
-			cookie = cookies.Vanilla,
-			volatileCookie = cookies['Vanilla-Volatile'],
+		var cookie = req.cookies[cookieName],
 			isAuthenticated = false,
-			userId;
+			ts, userId;
+		req.user = {};
 
-		// Conveinance functions
+		// Convenience functions
 		req.isAuthenticated = function () {
 			return isAuthenticated;
 		};
-		req.user = {};
+		req.login = function (userId, callback) {
+			findUser(userId, function (user) {
+				// Couldn't find the user
+				if (!user) {
+					res.clearCookie(cookieName);
+					return callback("Couldn't find the user.");
+				}
+
+				// Everything went swell, login!
+				isAuthenticated = true;
+				req.user = user;
+				return callback(null, user);
+			});
+		};
+		req.logIn = req.login;
+		req.logout = function () {
+			isAuthenticated = false;
+			req.user = {};
+			res.clearCookie(cookieName);
+		};
+		req.logOut = req.logout;
 
 		// Missing a cookie, abort!
-		console.log(cookie);
-		if (cookie === undefined || volatileCookie === undefined) {
+		if (cookie === undefined) {
 			return next();
 		}
 
-		// Get the user from the cookie (and validate the hash)
+		// Check the cookie for tampering
 		if (!vanillaHash.checkCookie(cookie)) {
+			res.clearCookie(cookieName);
 			return next();
 		}
-		userId = cookie.parse('-')[0];
 
-		// Find the user in the database
-		findUser(userId, function (user) {
-			// Couldn't find the user
-			if (!user) {
-				return next();
+		// Check that we have a valid cookie
+		cookie = cookie.split("|");
+		if (cookie.length < 5) {
+			res.clearCookie(cookieName);
+			return next();
+		}
+
+		// Check if the login expired
+		ts = parseInt(cookie.pop(), 10);
+		if (isNaN(ts) || ts < ((new Date()).getTime() / 1000)) {
+			res.clearCookie(cookieName);
+			return next();
+		}
+
+		// Login
+		req.login(cookie.pop(), function (err, user) {
+			if (err || !user) {
+				res.clearCookie(cookieName);
 			}
-			// Everything went swell, login!
-			isAuthenticated = true;
-			req.user = user;
+			next();
 		});
 	});
 };

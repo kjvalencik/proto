@@ -22,7 +22,11 @@ exports.init = function init(options, callback) {
 	var vanillaConf = vanillaConfig(env.current.vanillaConf);
 	env.current.vanillaConf = vanillaConf;
 	sequelize = new Sequelize(vanillaConf.Database.Name, vanillaConf.Database.User,
-		vanillaConf.Database.Password, { host : vanillaConf.Database.Host, timestamps : false });
+		vanillaConf.Database.Password, {
+		host       : vanillaConf.Database.Host,
+		logging    : false,
+		timestamps : false
+	});
 
 	initMiddleware();
 
@@ -59,6 +63,7 @@ function initMiddleware() {
 		app.use(express.static(__dirname + '/../public'));
 
 		// Middleware to share authentication state with vanilla
+		app.use(express.cookieParser());
 		mw.vanillaAuth(app, sequelize, env);
 
 		// set the middleware stack
