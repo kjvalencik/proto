@@ -329,7 +329,7 @@ Copyright 2007 Chris Wanstrath [ chris@ozmm.org ]
           <div class="Content"> \
           </div> \
           <div class="Footer"> \
-            <a href="#" class="Close"><span>Ã—</span></a> \
+            <a href="#" class="Close"><span>&#x00d7;</span></a> \
           </div> \
         </div> \
       </div> \

@@ -36,6 +36,13 @@ module.exports = function (app, sequelize, env) {
 					return callback("Couldn't find the user.");
 				}
 
+				try {
+					user.Attributes = phpjs.unserialize(user.Attributes);
+				} catch (e) {}
+				try {
+					user.Preferences = phpjs.unserialize(user.Preferences);
+				} catch (e) {}				
+
 				// Everything went swell, login!
 				isAuthenticated = true;
 				req.user = user;

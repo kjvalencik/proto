@@ -110,6 +110,7 @@ var preRendrMiddleware = [
 
 		if (userData.authenticated) {
 			userData.name = req.user.Name;
+			userData.transientKey = req.user.Attributes.TransientKey;
 		}
 
 		rendrMw.initApp(_.extend({

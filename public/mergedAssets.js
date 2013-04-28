@@ -3044,6 +3044,2525 @@ Handlebars.template = Handlebars.VM.template;
 
 }).call(this);
 
+/*global setTimeout: false, console: false */
+(function () {
+
+    var async = {};
+
+    // global on the server, window in the browser
+    var root = this,
+        previous_async = root.async;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = async;
+    }
+    else {
+        root.async = async;
+    }
+
+    async.noConflict = function () {
+        root.async = previous_async;
+        return async;
+    };
+
+    //// cross-browser compatiblity functions ////
+
+    var _forEach = function (arr, iterator) {
+        if (arr.forEach) {
+            return arr.forEach(iterator);
+        }
+        for (var i = 0; i < arr.length; i += 1) {
+            iterator(arr[i], i, arr);
+        }
+    };
+
+    var _map = function (arr, iterator) {
+        if (arr.map) {
+            return arr.map(iterator);
+        }
+        var results = [];
+        _forEach(arr, function (x, i, a) {
+            results.push(iterator(x, i, a));
+        });
+        return results;
+    };
+
+    var _reduce = function (arr, iterator, memo) {
+        if (arr.reduce) {
+            return arr.reduce(iterator, memo);
+        }
+        _forEach(arr, function (x, i, a) {
+            memo = iterator(memo, x, i, a);
+        });
+        return memo;
+    };
+
+    var _keys = function (obj) {
+        if (Object.keys) {
+            return Object.keys(obj);
+        }
+        var keys = [];
+        for (var k in obj) {
+            if (obj.hasOwnProperty(k)) {
+                keys.push(k);
+            }
+        }
+        return keys;
+    };
+
+    //// exported async module functions ////
+
+    //// nextTick implementation with browser-compatible fallback ////
+    if (typeof process === 'undefined' || !(process.nextTick)) {
+        async.nextTick = function (fn) {
+            setTimeout(fn, 0);
+        };
+    }
+    else {
+        async.nextTick = process.nextTick;
+    }
+
+    async.forEach = function (arr, iterator, callback) {
+        callback = callback || function () {};
+        if (!arr.length) {
+            return callback();
+        }
+        var completed = 0;
+        _forEach(arr, function (x) {
+            iterator(x, function (err) {
+                if (err) {
+                    callback(err);
+                    callback = function () {};
+                }
+                else {
+                    completed += 1;
+                    if (completed === arr.length) {
+                        callback(null);
+                    }
+                }
+            });
+        });
+    };
+
+    async.forEachSeries = function (arr, iterator, callback) {
+        callback = callback || function () {};
+        if (!arr.length) {
+            return callback();
+        }
+        var completed = 0;
+        var iterate = function () {
+            iterator(arr[completed], function (err) {
+                if (err) {
+                    callback(err);
+                    callback = function () {};
+                }
+                else {
+                    completed += 1;
+                    if (completed === arr.length) {
+                        callback(null);
+                    }
+                    else {
+                        iterate();
+                    }
+                }
+            });
+        };
+        iterate();
+    };
+
+    async.forEachLimit = function (arr, limit, iterator, callback) {
+        callback = callback || function () {};
+        if (!arr.length || limit <= 0) {
+            return callback();
+        }
+        var completed = 0;
+        var started = 0;
+        var running = 0;
+
+        (function replenish () {
+            if (completed === arr.length) {
+                return callback();
+            }
+
+            while (running < limit && started < arr.length) {
+                started += 1;
+                running += 1;
+                iterator(arr[started - 1], function (err) {
+                    if (err) {
+                        callback(err);
+                        callback = function () {};
+                    }
+                    else {
+                        completed += 1;
+                        running -= 1;
+                        if (completed === arr.length) {
+                            callback();
+                        }
+                        else {
+                            replenish();
+                        }
+                    }
+                });
+            }
+        })();
+    };
+
+
+    var doParallel = function (fn) {
+        return function () {
+            var args = Array.prototype.slice.call(arguments);
+            return fn.apply(null, [async.forEach].concat(args));
+        };
+    };
+    var doSeries = function (fn) {
+        return function () {
+            var args = Array.prototype.slice.call(arguments);
+            return fn.apply(null, [async.forEachSeries].concat(args));
+        };
+    };
+
+
+    var _asyncMap = function (eachfn, arr, iterator, callback) {
+        var results = [];
+        arr = _map(arr, function (x, i) {
+            return {index: i, value: x};
+        });
+        eachfn(arr, function (x, callback) {
+            iterator(x.value, function (err, v) {
+                results[x.index] = v;
+                callback(err);
+            });
+        }, function (err) {
+            callback(err, results);
+        });
+    };
+    async.map = doParallel(_asyncMap);
+    async.mapSeries = doSeries(_asyncMap);
+
+
+    // reduce only has a series version, as doing reduce in parallel won't
+    // work in many situations.
+    async.reduce = function (arr, memo, iterator, callback) {
+        async.forEachSeries(arr, function (x, callback) {
+            iterator(memo, x, function (err, v) {
+                memo = v;
+                callback(err);
+            });
+        }, function (err) {
+            callback(err, memo);
+        });
+    };
+    // inject alias
+    async.inject = async.reduce;
+    // foldl alias
+    async.foldl = async.reduce;
+
+    async.reduceRight = function (arr, memo, iterator, callback) {
+        var reversed = _map(arr, function (x) {
+            return x;
+        }).reverse();
+        async.reduce(reversed, memo, iterator, callback);
+    };
+    // foldr alias
+    async.foldr = async.reduceRight;
+
+    var _filter = function (eachfn, arr, iterator, callback) {
+        var results = [];
+        arr = _map(arr, function (x, i) {
+            return {index: i, value: x};
+        });
+        eachfn(arr, function (x, callback) {
+            iterator(x.value, function (v) {
+                if (v) {
+                    results.push(x);
+                }
+                callback();
+            });
+        }, function (err) {
+            callback(_map(results.sort(function (a, b) {
+                return a.index - b.index;
+            }), function (x) {
+                return x.value;
+            }));
+        });
+    };
+    async.filter = doParallel(_filter);
+    async.filterSeries = doSeries(_filter);
+    // select alias
+    async.select = async.filter;
+    async.selectSeries = async.filterSeries;
+
+    var _reject = function (eachfn, arr, iterator, callback) {
+        var results = [];
+        arr = _map(arr, function (x, i) {
+            return {index: i, value: x};
+        });
+        eachfn(arr, function (x, callback) {
+            iterator(x.value, function (v) {
+                if (!v) {
+                    results.push(x);
+                }
+                callback();
+            });
+        }, function (err) {
+            callback(_map(results.sort(function (a, b) {
+                return a.index - b.index;
+            }), function (x) {
+                return x.value;
+            }));
+        });
+    };
+    async.reject = doParallel(_reject);
+    async.rejectSeries = doSeries(_reject);
+
+    var _detect = function (eachfn, arr, iterator, main_callback) {
+        eachfn(arr, function (x, callback) {
+            iterator(x, function (result) {
+                if (result) {
+                    main_callback(x);
+                    main_callback = function () {};
+                }
+                else {
+                    callback();
+                }
+            });
+        }, function (err) {
+            main_callback();
+        });
+    };
+    async.detect = doParallel(_detect);
+    async.detectSeries = doSeries(_detect);
+
+    async.some = function (arr, iterator, main_callback) {
+        async.forEach(arr, function (x, callback) {
+            iterator(x, function (v) {
+                if (v) {
+                    main_callback(true);
+                    main_callback = function () {};
+                }
+                callback();
+            });
+        }, function (err) {
+            main_callback(false);
+        });
+    };
+    // any alias
+    async.any = async.some;
+
+    async.every = function (arr, iterator, main_callback) {
+        async.forEach(arr, function (x, callback) {
+            iterator(x, function (v) {
+                if (!v) {
+                    main_callback(false);
+                    main_callback = function () {};
+                }
+                callback();
+            });
+        }, function (err) {
+            main_callback(true);
+        });
+    };
+    // all alias
+    async.all = async.every;
+
+    async.sortBy = function (arr, iterator, callback) {
+        async.map(arr, function (x, callback) {
+            iterator(x, function (err, criteria) {
+                if (err) {
+                    callback(err);
+                }
+                else {
+                    callback(null, {value: x, criteria: criteria});
+                }
+            });
+        }, function (err, results) {
+            if (err) {
+                return callback(err);
+            }
+            else {
+                var fn = function (left, right) {
+                    var a = left.criteria, b = right.criteria;
+                    return a < b ? -1 : a > b ? 1 : 0;
+                };
+                callback(null, _map(results.sort(fn), function (x) {
+                    return x.value;
+                }));
+            }
+        });
+    };
+
+    async.auto = function (tasks, callback) {
+        callback = callback || function () {};
+        var keys = _keys(tasks);
+        if (!keys.length) {
+            return callback(null);
+        }
+
+        var results = {};
+
+        var listeners = [];
+        var addListener = function (fn) {
+            listeners.unshift(fn);
+        };
+        var removeListener = function (fn) {
+            for (var i = 0; i < listeners.length; i += 1) {
+                if (listeners[i] === fn) {
+                    listeners.splice(i, 1);
+                    return;
+                }
+            }
+        };
+        var taskComplete = function () {
+            _forEach(listeners.slice(0), function (fn) {
+                fn();
+            });
+        };
+
+        addListener(function () {
+            if (_keys(results).length === keys.length) {
+                callback(null, results);
+                callback = function () {};
+            }
+        });
+
+        _forEach(keys, function (k) {
+            var task = (tasks[k] instanceof Function) ? [tasks[k]]: tasks[k];
+            var taskCallback = function (err) {
+                if (err) {
+                    callback(err);
+                    // stop subsequent errors hitting callback multiple times
+                    callback = function () {};
+                }
+                else {
+                    var args = Array.prototype.slice.call(arguments, 1);
+                    if (args.length <= 1) {
+                        args = args[0];
+                    }
+                    results[k] = args;
+                    taskComplete();
+                }
+            };
+            var requires = task.slice(0, Math.abs(task.length - 1)) || [];
+            var ready = function () {
+                return _reduce(requires, function (a, x) {
+                    return (a && results.hasOwnProperty(x));
+                }, true) && !results.hasOwnProperty(k);
+            };
+            if (ready()) {
+                task[task.length - 1](taskCallback, results);
+            }
+            else {
+                var listener = function () {
+                    if (ready()) {
+                        removeListener(listener);
+                        task[task.length - 1](taskCallback, results);
+                    }
+                };
+                addListener(listener);
+            }
+        });
+    };
+
+    async.waterfall = function (tasks, callback) {
+        callback = callback || function () {};
+        if (!tasks.length) {
+            return callback();
+        }
+        var wrapIterator = function (iterator) {
+            return function (err) {
+                if (err) {
+                    callback(err);
+                    callback = function () {};
+                }
+                else {
+                    var args = Array.prototype.slice.call(arguments, 1);
+                    var next = iterator.next();
+                    if (next) {
+                        args.push(wrapIterator(next));
+                    }
+                    else {
+                        args.push(callback);
+                    }
+                    async.nextTick(function () {
+                        iterator.apply(null, args);
+                    });
+                }
+            };
+        };
+        wrapIterator(async.iterator(tasks))();
+    };
+
+    async.parallel = function (tasks, callback) {
+        callback = callback || function () {};
+        if (tasks.constructor === Array) {
+            async.map(tasks, function (fn, callback) {
+                if (fn) {
+                    fn(function (err) {
+                        var args = Array.prototype.slice.call(arguments, 1);
+                        if (args.length <= 1) {
+                            args = args[0];
+                        }
+                        callback.call(null, err, args);
+                    });
+                }
+            }, callback);
+        }
+        else {
+            var results = {};
+            async.forEach(_keys(tasks), function (k, callback) {
+                tasks[k](function (err) {
+                    var args = Array.prototype.slice.call(arguments, 1);
+                    if (args.length <= 1) {
+                        args = args[0];
+                    }
+                    results[k] = args;
+                    callback(err);
+                });
+            }, function (err) {
+                callback(err, results);
+            });
+        }
+    };
+
+    async.series = function (tasks, callback) {
+        callback = callback || function () {};
+        if (tasks.constructor === Array) {
+            async.mapSeries(tasks, function (fn, callback) {
+                if (fn) {
+                    fn(function (err) {
+                        var args = Array.prototype.slice.call(arguments, 1);
+                        if (args.length <= 1) {
+                            args = args[0];
+                        }
+                        callback.call(null, err, args);
+                    });
+                }
+            }, callback);
+        }
+        else {
+            var results = {};
+            async.forEachSeries(_keys(tasks), function (k, callback) {
+                tasks[k](function (err) {
+                    var args = Array.prototype.slice.call(arguments, 1);
+                    if (args.length <= 1) {
+                        args = args[0];
+                    }
+                    results[k] = args;
+                    callback(err);
+                });
+            }, function (err) {
+                callback(err, results);
+            });
+        }
+    };
+
+    async.iterator = function (tasks) {
+        var makeCallback = function (index) {
+            var fn = function () {
+                if (tasks.length) {
+                    tasks[index].apply(null, arguments);
+                }
+                return fn.next();
+            };
+            fn.next = function () {
+                return (index < tasks.length - 1) ? makeCallback(index + 1): null;
+            };
+            return fn;
+        };
+        return makeCallback(0);
+    };
+
+    async.apply = function (fn) {
+        var args = Array.prototype.slice.call(arguments, 1);
+        return function () {
+            return fn.apply(
+                null, args.concat(Array.prototype.slice.call(arguments))
+            );
+        };
+    };
+
+    var _concat = function (eachfn, arr, fn, callback) {
+        var r = [];
+        eachfn(arr, function (x, cb) {
+            fn(x, function (err, y) {
+                r = r.concat(y || []);
+                cb(err);
+            });
+        }, function (err) {
+            callback(err, r);
+        });
+    };
+    async.concat = doParallel(_concat);
+    async.concatSeries = doSeries(_concat);
+
+    async.whilst = function (test, iterator, callback) {
+        if (test()) {
+            iterator(function (err) {
+                if (err) {
+                    return callback(err);
+                }
+                async.whilst(test, iterator, callback);
+            });
+        }
+        else {
+            callback();
+        }
+    };
+
+    async.until = function (test, iterator, callback) {
+        if (!test()) {
+            iterator(function (err) {
+                if (err) {
+                    return callback(err);
+                }
+                async.until(test, iterator, callback);
+            });
+        }
+        else {
+            callback();
+        }
+    };
+
+    async.queue = function (worker, concurrency) {
+        var workers = 0;
+        var q = {
+            tasks: [],
+            concurrency: concurrency,
+            saturated: null,
+            empty: null,
+            drain: null,
+            push: function (data, callback) {
+                if(data.constructor !== Array) {
+                    data = [data];
+                }
+                _forEach(data, function(task) {
+                    q.tasks.push({
+                        data: task,
+                        callback: typeof callback === 'function' ? callback : null
+                    });
+                    if (q.saturated && q.tasks.length == concurrency) {
+                        q.saturated();
+                    }
+                    async.nextTick(q.process);
+                });
+            },
+            process: function () {
+                if (workers < q.concurrency && q.tasks.length) {
+                    var task = q.tasks.shift();
+                    if(q.empty && q.tasks.length == 0) q.empty();
+                    workers += 1;
+                    worker(task.data, function () {
+                        workers -= 1;
+                        if (task.callback) {
+                            task.callback.apply(task, arguments);
+                        }
+                        if(q.drain && q.tasks.length + workers == 0) q.drain();
+                        q.process();
+                    });
+                }
+            },
+            length: function () {
+                return q.tasks.length;
+            },
+            running: function () {
+                return workers;
+            }
+        };
+        return q;
+    };
+
+    var _console_fn = function (name) {
+        return function (fn) {
+            var args = Array.prototype.slice.call(arguments, 1);
+            fn.apply(null, args.concat([function (err) {
+                var args = Array.prototype.slice.call(arguments, 1);
+                if (typeof console !== 'undefined') {
+                    if (err) {
+                        if (console.error) {
+                            console.error(err);
+                        }
+                    }
+                    else if (console[name]) {
+                        _forEach(args, function (x) {
+                            console[name](x);
+                        });
+                    }
+                }
+            }]));
+        };
+    };
+    async.log = _console_fn('log');
+    async.dir = _console_fn('dir');
+    /*async.info = _console_fn('info');
+    async.warn = _console_fn('warn');
+    async.error = _console_fn('error');*/
+
+    async.memoize = function (fn, hasher) {
+        var memo = {};
+        var queues = {};
+        hasher = hasher || function (x) {
+            return x;
+        };
+        var memoized = function () {
+            var args = Array.prototype.slice.call(arguments);
+            var callback = args.pop();
+            var key = hasher.apply(null, args);
+            if (key in memo) {
+                callback.apply(null, memo[key]);
+            }
+            else if (key in queues) {
+                queues[key].push(callback);
+            }
+            else {
+                queues[key] = [callback];
+                fn.apply(null, args.concat([function () {
+                    memo[key] = arguments;
+                    var q = queues[key];
+                    delete queues[key];
+                    for (var i = 0, l = q.length; i < l; i++) {
+                      q[i].apply(null, arguments);
+                    }
+                }]));
+            }
+        };
+        memoized.unmemoized = fn;
+        return memoized;
+    };
+
+    async.unmemoize = function (fn) {
+      return function () {
+        return (fn.unmemoized || fn).apply(null, arguments);
+      };
+    };
+
+}());
+
+
+// This file contains javascript that is global to the entire Garden application
+jQuery(document).ready(function($) {
+   if ($.browser.msie) {
+      $('body').addClass('MSIE');
+   }
+   
+   var d = new Date();
+   var clientDate = d.getFullYear()+'-'+(d.getMonth() + 1)+'-'+d.getDate()+' '+d.getHours()+':'+d.getMinutes();
+
+   // Set the ClientHour if there is an input looking for it.
+   $('input:hidden[name$=ClientHour]').livequery(function() {
+      $(this).val(clientDate);
+   });
+
+   // Ajax/Save the ClientHour if it is different from the value in the db.
+   $('input:hidden[id$=SetClientHour]').livequery(function() {
+      if (d.getHours() != $(this).val()) {
+         $.get(
+            gdn.url('/utility/setclienthour'),
+            {'ClientDate': clientDate, 'TransientKey': gdn.definition('TransientKey'), 'DeliveryType': 'BOOL'}
+         );
+      }
+   });
+   
+   // Hide/Reveal the "forgot your password" form if the ForgotPassword button is clicked.
+   $('a.ForgotPassword').live('click', function() {
+      $('.Methods').toggle();
+      $('#Form_User_Password').toggle();
+		$('#Form_User_SignIn').toggle();
+      return false;
+   });
+   
+   if ($.fn.autogrow)
+      $('textarea.Autogrow').livequery(function() {
+         $(this).autogrow();
+      });
+      
+   $.postParseJson = function(json) {
+      if (json.Data) json.Data = $.base64Decode(json.Data);
+      return json;
+   }
+		
+	gdn = { };
+	gdn.Libraries = {};
+
+   // Grab a definition from hidden inputs in the page
+   gdn.definition = function(definition, defaultVal, set) {
+      if (defaultVal == null)
+         defaultVal = definition;
+         
+      var $def = $('#Definitions #' + definition);
+      var def;
+      
+      if(set) {
+         $def.val(defaultVal);
+         def = defaultVal;
+      } else {
+         def = $def.val();
+         if ($def.length == 0)
+            def = defaultVal;
+      }
+         
+      return def;
+   }
+   
+   gdn.elementSupports = function(element, attribute) {
+      var test = document.createElement(element);
+      if (attribute in test)
+         return true;
+      else
+         return false;
+   }
+   
+   gdn.querySep = function(url) {
+      return url.indexOf('?') == -1 ? '?' : '&';
+   }
+
+   // Go to notifications if clicking on a user's notification count
+   $('li.UserNotifications a span').click(function() {
+      document.location = gdn.url('/profile/notifications');
+      return false;
+   });
+   
+   // This turns any anchor with the "Popup" class into an in-page pop-up (the
+   // view of the requested in-garden link will be displayed in a popup on the
+   // current screen).
+   if ($.fn.popup) {
+      $('a.Popup').popup();
+		$('a.PopConfirm').popup({'confirm' : true, 'followConfirm' : true});
+   }
+
+   $(".PopupWindow").live('click', function() {
+      var $this = $(this);
+
+      var width = $this.attr('popupWidth'); width = width ? width : 960;
+      var height = $this.attr('popupHeight'); height = height ? height : 600;
+      var left = (screen.width - width) / 2;
+      var top = (screen.height - height) / 2;
+
+      var id = $this.attr('id');
+      var href = $this.attr('href');
+      if ($this.attr('popupHref'))
+         href = $this.attr('popupHref');
+      else
+         href += gdn.querySep(href)+'display=popup';
+
+      var win = window.open(href, 'Window_' + id, "left="+left+",top="+top+",width="+width+",height="+height+",status=0,scrollbars=0");
+      if (win)
+         win.focus();
+      return false;
+   });
+   
+   // This turns any anchor with the "Popdown" class into an in-page pop-up, but
+   // it does not hijack forms in the popup.
+   if ($.fn.popup)
+      $('a.Popdown').popup({hijackForms: false});
+   
+   // This turns SignInPopup anchors into in-page popups
+   if ($.fn.popup)
+      $('a.SignInPopup').popup({containerCssClass:'SignInPopup'});
+
+   // Make sure that message dismissalls are ajax'd
+   $('a.Dismiss').live('click', function() {
+      var anchor = this;
+      var container = $(anchor).parent();
+      var transientKey = gdn.definition('TransientKey');
+      var data = 'DeliveryType=BOOL&TransientKey=' + transientKey;
+      $.post($(anchor).attr('href'), data, function(response) {
+         if (response == 'TRUE')
+            $(container).fadeOut('fast',function() {
+               $(this).remove();
+            });
+      });
+      return false;
+   });
+
+   // This turns any form into a "post-in-place" form so it is ajaxed to save
+   // without a refresh. The form must be within an element with the "AjaxForm"
+   // class.
+   if ($.fn.handleAjaxForm)
+      $('.AjaxForm').handleAjaxForm();
+   
+	// Show hoverhelp on hover
+	$('.HoverHelp').hover(
+		function() {
+			$(this).find('.Help').show();
+		},
+		function() {
+			$(this).find('.Help').hide();
+		}
+	);
+
+   // If a page loads with a hidden redirect url, go there after a few moments.
+   var RedirectUrl = gdn.definition('RedirectUrl', '');
+   var CheckPopup = gdn.definition('CheckPopup', '');
+   if (RedirectUrl != '') {
+      if (CheckPopup && window.opener) {
+         window.opener.location.replace(RedirectUrl);
+         window.close();
+      } else {
+         setTimeout(function() {document.location.replace(RedirectUrl);}, 200);
+      }
+   }
+
+   // Make tables sortable if the tableDnD plugin is present.
+   if ($.tableDnD)
+      $("table.Sortable").tableDnD({onDrop: function(table, row) {
+         var tableId = $($.tableDnD.currentTable).attr('id');
+         // Add in the transient key for postback authentication
+         var transientKey = gdn.definition('TransientKey');
+         var data = $.tableDnD.serialize() + '&DeliveryType=BOOL&TableID=' + tableId + '&TransientKey=' + transientKey;
+         var webRoot = gdn.definition('WebRoot', '');
+         $.post(gdn.combinePaths(webRoot, 'index.php?p=/dashboard/utility/sort/'), data, function(response) {
+            if (response == 'TRUE')
+               $('#'+tableId+' tbody tr td').effect("highlight", {}, 1000);
+
+         });
+      }});
+
+   // Format email addresses
+   $('span.Email.EmailUnformatted').livequery(function() {
+      var el = $(this);
+      el.removeClass('EmailUnformatted');
+	  var email = $(this).html().replace(/<em[^>]*>dot<\/em>/ig, '.').replace(/<strong[^>]*>at<\/strong>/ig, '@');
+      el.html('<a href="mailto:' + email + '">' + email + '</a>');
+   });
+
+   // Make sure that the commentbox & aboutbox do not allow more than 1000 characters
+   $.fn.setMaxChars = function(iMaxChars) {
+      $(this).live('keyup', function() {
+         var txt = $(this).val();
+         if (txt.length > iMaxChars)
+            $(this).val(txt.substr(0, iMaxChars));
+      });
+   }
+
+   // Generate a random string of specified length
+   gdn.generateString = function(length) {
+      if (length == null)
+         length = 5;
+         
+      var chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%*';
+      var string = '';
+      var pos = 0;
+      for (var i = 0; i < length; i++) {
+         pos = Math.floor(Math.random() * chars.length);
+         string += chars.substring(pos, pos + 1);
+      }
+      return string;
+   };
+   
+   // Combine two paths and make sure that there is only a single directory concatenator
+   gdn.combinePaths = function(path1, path2) {
+      if (path1.substr(-1, 1) == '/')
+         path1 = path1.substr(0, path1.length - 1);
+         
+      if (path2.substring(0, 1) == '/')
+         path2 = path2.substring(1);
+      
+      return path1 + '/' + path2;
+   };
+
+   gdn.processTargets = function(targets) {
+      if(!targets || !targets.length)
+         return;
+      for(i = 0; i < targets.length; i++) {
+         var item = targets[i];
+         $target = $(item.Target);
+         switch(item.Type) {
+            case 'Ajax':
+               $.ajax({
+                  type: "POST",
+                  url: item.Data
+               });
+               break;
+            case 'Append':
+               $target.append(item.Data);
+               break;
+            case 'Before':
+               $target.before(item.Data);
+               break;
+            case 'After':
+               $target.after(item.Data);
+               break;
+            case 'Prepend':
+               $target.prepend(item.Data);
+               break;
+            case 'Redirect':
+               window.location.replace(item.Data);
+               break;
+            case 'Remove':
+               $target.remove();
+               break;
+            case 'Text':
+               $target.text(item.Data);
+               break;
+            case 'Html':
+               $target.html(item.Data);
+         }
+      }
+   };
+   
+   gdn.requires = function(Library) {
+      if (!(Library instanceof Array))
+         Library = [Library];
+      
+      var Response = true;
+      
+      $(Library).each(function(i,Lib){
+         // First check if we already have this library
+         var LibAvailable = gdn.available(Lib);
+         
+         if (!LibAvailable) Response = false;
+         
+         // Skip any libs that are ready or processing
+         if (gdn.Libraries[Lib] === false || gdn.Libraries[Lib] === true)
+            return;
+         
+         // As yet unseen. Try to load
+         gdn.Libraries[Lib] = false;
+         var Src = '/js/'+Lib+'.js';
+         var head = document.getElementsByTagName('head')[0];
+         var script = document.createElement('script');
+         script.type = 'text/javascript';
+         script.src = Src;
+         head.appendChild(script);
+      });
+      
+      if (Response) gdn.loaded(null);
+      return Response;
+   };
+   
+   gdn.loaded = function(Library) {
+      if (Library != null) 
+         gdn.Libraries[Library] = true;
+         
+      $(document).trigger('libraryloaded',[Library])
+   }
+   
+   gdn.available = function(Library) {
+      if (!(Library instanceof Array))
+         Library = [Library];
+         
+      for (var i = 0; i<Library.length; i++) {
+         var Lib = Library[i];
+         if (gdn.Libraries[Lib] !== true) return false;
+      }
+      return true;
+   }
+   
+   gdn.url = function(path) {
+      if (path.indexOf("//") >= 0)
+         return path; // this is an absolute path.
+
+      var urlFormat = gdn.definition("UrlFormat", "");
+      
+      if (path.substr(0, 1) == "/")
+         path = path.substr(1);
+
+      if (urlFormat.indexOf("?") >= 0)
+         path = path.replace("?", "&");
+
+      return urlFormat.replace("{Path}", path);
+   };
+
+   // Fill in placeholders.
+   if (!gdn.elementSupports('input', 'placeholder')) {
+      $('input:text').each(function() {
+         var $this = $(this);
+         var placeholder = $this.attr('placeholder');
+         
+         if (!$this.val() && placeholder) {
+            $this.val(placeholder);
+            $this.blur(function() {
+               $this.val(placeholder);
+            });
+            $this.focus(function() {
+               if ($this.val() == placeholder)
+                  $this.val('');
+            });
+            $this.closest('form').bind('submit', function() {
+               if ($this.val() == placeholder)
+                  $this.val('');
+            });
+         }
+      });
+   }
+   
+//   var searchText = gdn.definition('Search', 'Search');
+//   if (!$('div.Search input.InputBox').val())
+//      $('div.Search input.InputBox').val(searchText);
+//   $('div.Search input.InputBox').blur(function() {
+//      if (typeof $(this).val() == 'undefined' || $(this).val() == '')
+//         $(this).val(searchText);
+//   });
+//   $('div.Search input.InputBox').focus(function() {
+//      if ($(this).val() == searchText)
+//         $(this).val('');
+//   });
+
+   $.fn.popin = function(options) {
+      var settings = $.extend({}, options);
+      
+      this.each(function(i, elem) {
+         var url = $(elem).attr('rel');
+         var $elem = $(elem);
+         $.ajax({
+            url: gdn.url(url),
+            data: {DeliveryType: 'VIEW'},
+            success: function(data) {
+               $elem.html(data);
+            },
+            complete: function() {
+               $elem.removeClass('Progress TinyProgress');
+               if (settings.complete != undefined) {
+                  settings.complete($elem);
+               }
+            }
+         });
+     });
+   };
+   $('.Popin').popin();
+
+   $.fn.openToggler = function() {
+     $(this).click(function() {
+        var $flyout = $('.Flyout', this);
+
+        // Dynamically fill the flyout.
+        var rel = $(this).attr('rel');
+        if (rel) {
+           $(this).attr('rel', '');
+           $flyout.addClass('Progress');
+            $.ajax({
+               url: gdn.url(rel),
+               data: {DeliveryType: 'VIEW'},
+               success: function(data) {
+                  $flyout.html(data);
+               },
+               complete: function() {
+                  $flyout.removeClass('Progress');
+               }
+            });
+        }
+
+        if ($flyout.css('display') == 'none') {
+           $(this).addClass('Open')
+           $flyout.show();
+        } else {
+           $flyout.hide()
+           $(this).removeClass('Open');
+        }
+     });
+   }
+   $('.ToggleFlyout').openToggler();
+   
+   // Add a spinner onclick of buttons with this class
+   $('input.SpinOnClick').live('click', function() {
+      $(this).before('<span class="AfterButtonLoading">&#160;</span>').removeClass('SpinOnClick');
+   });
+   
+   // Confirmation for item removals
+   $('a.RemoveItem').click(function() {
+      if (!confirm('Are you sure you would like to remove this item?')) {
+         return false;
+      }
+   });
+
+   // Jump to the hash if desired.
+   if (gdn.definition('LocationHash', 0) && window.location.hash == '') {
+      window.location.hash = gdn.definition('LocationHash');
+   }
+   
+   gdn.stats = function() {
+      // Call directly back to the deployment and invoke the stats handler
+      var StatsURL = gdn.url('settings/analyticstick.json');
+      jQuery.ajax({
+         dataType: 'json',
+         type: 'post',
+         url: StatsURL,
+         data: {'TransientKey': gdn.definition('TransientKey'), 'Path': gdn.definition('Path')},
+         success: function(json) {
+            gdn.inform(json);
+         }
+      });
+   }
+   
+   // Ping back to the deployment server to track views, and trigger
+   // conditional stats tasks
+   var AnalyticsTask = gdn.definition('AnalyticsTask', false);
+   if (AnalyticsTask == 'tick')
+	     gdn.stats();
+   
+   // If a dismissable InformMessage close button is clicked, hide it.
+   $('div.InformWrapper.Dismissable a.Close').live('click', function() {
+      $(this).parents('div.InformWrapper').fadeOut('fast', function() {
+         $(this).remove();
+      });
+   });
+
+	gdn.setAutoDismiss = function() {
+		var timerId = $('div.InformMessages').attr('autodismisstimerid');
+		if (!timerId) {
+			timerId = setTimeout(function() {
+				$('div.InformWrapper.AutoDismiss').fadeOut('fast', function() {
+					$(this).remove();
+				});
+				$('div.InformMessages').removeAttr('autodismisstimerid');
+			}, 5000);
+			$('div.InformMessages').attr('autodismisstimerid', timerId);
+		}
+	}
+	
+	// Handle autodismissals
+	$('div.InformWrapper.AutoDismiss:first').livequery(function() {
+		gdn.setAutoDismiss();
+	});
+   
+	// Prevent autodismiss if hovering any inform messages
+	$('div.InformWrapper').live('mouseover mouseout', function(e) {
+		if (e.type == 'mouseover') {
+			var timerId = $('div.InformMessages').attr('autodismisstimerid');
+			if (timerId) {
+				clearTimeout(timerId);
+				$('div.InformMessages').removeAttr('autodismisstimerid');
+			}
+		} else {
+			gdn.setAutoDismiss();
+		}
+	});
+	
+   // Take any "inform" messages out of an ajax response and display them on the screen.
+   gdn.inform = function(response) {
+		if (!response || !response.InformMessages)
+			return;
+		
+		// If there is no message container in the page, add one
+		var informMessages = $('div.InformMessages');
+		if (informMessages.length == 0) {
+			$('<div class="InformMessages"></div>').appendTo('body');
+			informMessages = $('div.InformMessages');
+		}
+		var wrappers = $('div.InformMessages div.InformWrapper');
+		
+		// Loop through the inform messages and add them to the container
+		for (var i = 0; i < response.InformMessages.length; i++) {
+			css = 'InformWrapper';
+			if (response.InformMessages[i]['CssClass'])
+				css += ' ' + response.InformMessages[i]['CssClass'];
+				
+			elementId = '';
+			if (response.InformMessages[i]['id'])
+				elementId = response.InformMessages[i]['id'];
+				
+			sprite = '';
+			if (response.InformMessages[i]['Sprite']) {
+				css += ' HasSprite';
+				sprite = response.InformMessages[i]['Sprite'];
+			}
+			
+			dismissCallback = response.InformMessages[i]['DismissCallback'];
+			dismissCallbackUrl = response.InformMessages[i]['DismissCallbackUrl'];
+			if (dismissCallbackUrl)
+				dismissCallbackUrl = gdn.url(dismissCallbackUrl);
+				
+			try {
+				var message = response.InformMessages[i]['Message'];
+				var emptyMessage = message == '';
+				
+				// Is there a sprite?
+				if (sprite != '')
+					message = '<span class="InformSprite '+sprite+'"></span>' + message;
+				
+				// If the message is dismissable, add a close button
+				if (css.indexOf('Dismissable') > 0)
+					message = '<a class="Close"><span>×</span></a>' + message;
+
+				message = '<div class="InformMessage">'+message+'</div>';
+				// Insert any transient keys into the message (prevents csrf attacks in follow-on action urls).
+				message = message.replace(/{TransientKey}/g, gdn.definition('TransientKey'));
+				// Insert the current url as a target for inform anchors
+				message = message.replace(/{SelfUrl}/g, document.URL);
+				
+				var skip = false;
+				for (var j = 0; j < wrappers.length; j++) {
+					if ($(wrappers[j]).text() == $(message).text()) {
+						skip = true;
+					}
+				}
+				if (!skip) {
+					if (elementId != '') {
+						$('#'+elementId).remove();
+						elementId = ' id="'+elementId+'"';
+					}
+					if (!emptyMessage) {
+						informMessages.prepend('<div class="'+css+'"'+elementId+'>'+message+'</div>');
+						// Is there a callback or callback url to request on dismiss of the inform message?
+						if (dismissCallback) {
+							$('div.InformWrapper:first').find('a.Close').click(eval(dismissCallback));
+						} else if (dismissCallbackUrl) {
+							dismissCallbackUrl = dismissCallbackUrl.replace(/{TransientKey}/g, gdn.definition('TransientKey'));
+							var closeAnchor = $('div.InformWrapper:first').find('a.Close');
+							closeAnchor.attr('callbackurl', dismissCallbackUrl);
+							closeAnchor.click(function () {
+								$.ajax({
+									type: "POST",
+									url: $(this).attr('callbackurl'),
+									data: 'TransientKey='+gdn.definition('TransientKey'),
+									dataType: 'json',
+									error: function(XMLHttpRequest, textStatus, errorThrown) {
+										gdn.informMessage(XMLHttpRequest.responseText, 'Dismissable AjaxError');
+									},
+									success: function(json) {
+										gdn.inform(json);
+									}
+								});
+							});
+						}
+					}
+				}
+			} catch (e) {
+			}
+		}
+		informMessages.show();
+   }
+	
+	// Send an informMessage to the screen (same arguments as controller.InformMessage).
+	gdn.informMessage = function(message, options) {
+		if (!options)
+			options = new Array();
+			
+		if (typeof(options) == 'string') {
+			var css = options;
+			options = new Array();
+			options['CssClass'] = css;
+		}
+		options['Message'] = message;
+		if (!options['CssClass'])
+			options['CssClass'] = 'Dismissable AutoDismiss';
+		
+		gdn.inform({'InformMessages' : new Array(options)});
+	}
+   
+	// Pick up the inform message stack and display it on page load
+	var informMessageStack = gdn.definition('InformMessageStack', false);
+	if (informMessageStack) {
+		informMessageStack = {'InformMessages' : eval($.base64Decode(informMessageStack))};
+		gdn.inform(informMessageStack);
+	}
+	
+	// Ping for new notifications on pageload, and subsequently every 1 minute.
+	pingForNotifications = function(wait) {
+		if (!wait)
+			wait = 60000;
+			
+		setTimeout(function() {
+			$.ajax({
+				type: "POST",
+				url: gdn.url('dashboard/notifications/inform'),
+				data: {'TransientKey': gdn.definition('TransientKey'), 'Path': gdn.definition('Path'), 'DeliveryMethod': 'JSON'},
+				dataType: 'json',
+				error: function(XMLHttpRequest, textStatus, errorThrown) {
+					gdn.informMessage(XMLHttpRequest.responseText, 'Dismissable AjaxError');
+				},
+				success: function(json) {
+					gdn.inform(json);
+					pingForNotifications();
+				}
+			});
+	
+		}, wait); // Ping once a minute.
+	}
+   if (gdn.definition('SignedIn', '0') != '0')
+      pingForNotifications(false);
+	
+	// Stash something in the user's session (or unstash the value if it was not provided)
+	stash = function(name, value) {
+		$.ajax({
+			type: "POST",
+			url: gdn.url('session/stash'),
+			data: {'TransientKey' : gdn.definition('TransientKey'), 'Name' : name, 'Value' : value},
+			dataType: 'json',
+			error: function(XMLHttpRequest, textStatus, errorThrown) {
+				gdn.informMessage(XMLHttpRequest.responseText, 'Dismissable AjaxError');
+			},
+			success: function(json) {
+				gdn.inform(json);
+				return json.Unstash;
+			}
+		});
+		
+		return '';
+	}
+	
+	// When a stash anchor is clicked, look for inputs with values to stash
+	$('a.Stash').click(function() {
+		var comment = $('#Form_Comment textarea').val();
+		if (comment != '')
+			stash('CommentForDiscussionID_' + gdn.definition('DiscussionID'), comment);
+	});
+});
+
+	
+/**
+ * jQuery BASE64 functions
+ * 
+ * 	<code>
+ * 		Encodes the given data with base64. 
+ * 		String $.base64Encode ( String str )
+ *		<br />
+ * 		Decodes a base64 encoded data.
+ * 		String $.base64Decode ( String str )
+ * 	</code>
+ * 
+ * Encodes and Decodes the given data in base64.
+ * This encoding is designed to make binary data survive transport through transport layers that are not 8-bit clean, such as mail bodies.
+ * Base64-encoded data takes about 33% more space than the original data. 
+ * This javascript code is used to encode / decode data using base64 (this encoding is designed to make binary data survive transport through transport layers that are not 8-bit clean). Script is fully compatible with UTF-8 encoding. You can use base64 encoded data as simple encryption mechanism.
+ * If you plan using UTF-8 encoding in your project don't forget to set the page encoding to UTF-8 (Content-Type meta tag). 
+ * This function orginally get from the WebToolkit and rewrite for using as the jQuery plugin.
+ * 
+ * Example
+ * 	Code
+ * 		<code>
+ * 			$.base64Encode("I'm Persian."); 
+ * 		</code>
+ * 	Result
+ * 		<code>
+ * 			"SSdtIFBlcnNpYW4u"
+ * 		</code>
+ * 	Code
+ * 		<code>
+ * 			$.base64Decode("SSdtIFBlcnNpYW4u");
+ * 		</code>
+ * 	Result
+ * 		<code>
+ * 			"I'm Persian."
+ * 		</code>
+ * 
+ * @alias Muhammad Hussein Fattahizadeh < muhammad [AT] semnanweb [DOT] com >
+ * @link http://www.semnanweb.com/jquery-plugin/base64.html
+ * @see http://www.webtoolkit.info/
+ * @license http://www.gnu.org/licenses/gpl.html [GNU General Public License]
+ * @param {jQuery} {base64Encode:function(input))
+ * @param {jQuery} {base64Decode:function(input))
+ * @return string
+ */
+
+(function($){
+	
+	var keyString = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+	
+	var uTF8Encode = function(string) {
+		string = string.replace(/\x0d\x0a/g, "\x0a");
+		var output = "";
+		for (var n = 0; n < string.length; n++) {
+			var c = string.charCodeAt(n);
+			if (c < 128) {
+				output += String.fromCharCode(c);
+			} else if ((c > 127) && (c < 2048)) {
+				output += String.fromCharCode((c >> 6) | 192);
+				output += String.fromCharCode((c & 63) | 128);
+			} else {
+				output += String.fromCharCode((c >> 12) | 224);
+				output += String.fromCharCode(((c >> 6) & 63) | 128);
+				output += String.fromCharCode((c & 63) | 128);
+			}
+		}
+		return output;
+	};
+	
+	var uTF8Decode = function(input) {
+		var string = "";
+		var i = 0;
+		var c = c1 = c2 = 0;
+		while ( i < input.length ) {
+			c = input.charCodeAt(i);
+			if (c < 128) {
+				string += String.fromCharCode(c);
+				i++;
+			} else if ((c > 191) && (c < 224)) {
+				c2 = input.charCodeAt(i+1);
+				string += String.fromCharCode(((c & 31) << 6) | (c2 & 63));
+				i += 2;
+			} else {
+				c2 = input.charCodeAt(i+1);
+				c3 = input.charCodeAt(i+2);
+				string += String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63));
+				i += 3;
+			}
+		}
+		return string;
+	}
+	
+	$.extend({
+		base64Encode: function(input) {
+			var output = "";
+			var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
+			var i = 0;
+			input = uTF8Encode(input);
+			while (i < input.length) {
+				chr1 = input.charCodeAt(i++);
+				chr2 = input.charCodeAt(i++);
+				chr3 = input.charCodeAt(i++);
+				enc1 = chr1 >> 2;
+				enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
+				enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
+				enc4 = chr3 & 63;
+				if (isNaN(chr2)) {
+					enc3 = enc4 = 64;
+				} else if (isNaN(chr3)) {
+					enc4 = 64;
+				}
+				output = output + keyString.charAt(enc1) + keyString.charAt(enc2) + keyString.charAt(enc3) + keyString.charAt(enc4);
+			}
+			return output;
+		},
+		base64Decode: function(input) {
+			var output = "";
+			var chr1, chr2, chr3;
+			var enc1, enc2, enc3, enc4;
+			var i = 0;
+			input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
+			while (i < input.length) {
+				enc1 = keyString.indexOf(input.charAt(i++));
+				enc2 = keyString.indexOf(input.charAt(i++));
+				enc3 = keyString.indexOf(input.charAt(i++));
+				enc4 = keyString.indexOf(input.charAt(i++));
+				chr1 = (enc1 << 2) | (enc2 >> 4);
+				chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+				chr3 = ((enc3 & 3) << 6) | enc4;
+				output = output + String.fromCharCode(chr1);
+				if (enc3 != 64) {
+					output = output + String.fromCharCode(chr2);
+				}
+				if (enc4 != 64) {
+					output = output + String.fromCharCode(chr3);
+				}
+			}
+			output = uTF8Decode(output);
+			return output;
+		}
+	});
+})(jQuery);
+
+// Shrink large images to fit into message space, and pop into new window when clicked.
+// This needs to happen in onload because otherwise the image sizes are not yet known.
+jQuery(window).load(function() {
+   
+   var toggler = function(t_img, t_width) {
+      if (t_img.css('width') == 'auto')
+         t_img.css('width',t_width);
+      else
+         t_img.css('width','auto');
+      return false;
+   }
+   
+   jQuery('div.Message img').each(function(i,img) {
+      var img = jQuery(img);
+      var container = img.parents('div.Message');
+      if (img.width() > container.width()) {
+         var smwidth = container.width();
+         
+         img.css('width', smwidth).css('cursor', 'pointer');
+         img.after('<div class="ImageResized">' + gdn.definition('ImageResized', 'This image has been resized to fit in the page. Click to enlarge.') + '</div>');
+         
+         img.next().click(function() {
+            return toggler(img, smwidth);
+         });
+         img.click(function() {
+            return toggler(img, smwidth);
+         })
+      }
+   });
+});
+/*
+ * jQuery Form Plugin
+ * version: 2.10 (05/08/2008)
+ * @requires jQuery v1.2.2 or later
+ *
+ * Examples and documentation at: http://malsup.com/jquery/form/
+ * Dual licensed under the MIT and GPL licenses:
+ *   http://www.opensource.org/licenses/mit-license.php
+ *   http://www.gnu.org/licenses/gpl.html
+ *
+ * Revision: $Id$
+ */
+(function($) {
+
+/*
+    Usage Note:  
+    -----------
+    Do not use both ajaxSubmit and ajaxForm on the same form.  These
+    functions are intended to be exclusive.  Use ajaxSubmit if you want
+    to bind your own submit handler to the form.  For example,
+
+    $(document).ready(function() {
+        $('#myForm').bind('submit', function() {
+            $(this).ajaxSubmit({
+                target: '#output'
+            });
+            return false; // <-- important!
+        });
+    });
+
+    Use ajaxForm when you want the plugin to manage all the event binding
+    for you.  For example,
+
+    $(document).ready(function() {
+        $('#myForm').ajaxForm({
+            target: '#output'
+        });
+    });
+        
+    When using ajaxForm, the ajaxSubmit function will be invoked for you
+    at the appropriate time.  
+*/
+
+/**
+ * ajaxSubmit() provides a mechanism for immediately submitting 
+ * an HTML form using AJAX.
+ */
+$.fn.ajaxSubmit = function(options) {
+    // fast fail if nothing selected (http://dev.jquery.com/ticket/2752)
+    if (!this.length) {
+        log('ajaxSubmit: skipping submit process - no element selected');
+        return this;
+    }
+
+    if (typeof options == 'function')
+        options = { success: options };
+
+    options = $.extend({
+        url:  this.attr('action') || window.location.toString(),
+        type: this.attr('method') || 'GET'
+    }, options || {});
+
+    // hook for manipulating the form data before it is extracted;
+    // convenient for use with rich editors like tinyMCE or FCKEditor
+    var veto = {};
+    this.trigger('form-pre-serialize', [this, options, veto]);
+    if (veto.veto) {
+        log('ajaxSubmit: submit vetoed via form-pre-serialize trigger');
+        return this;
+   }
+
+    var a = this.formToArray(options.semantic);
+    if (options.data) {
+        options.extraData = options.data;
+        for (var n in options.data)
+            a.push( { name: n, value: options.data[n] } );
+    }
+
+    // give pre-submit callback an opportunity to abort the submit
+    if (options.beforeSubmit && options.beforeSubmit(a, this, options) === false) {
+        log('ajaxSubmit: submit aborted via beforeSubmit callback');
+        return this;
+    }    
+
+    // fire vetoable 'validate' event
+    this.trigger('form-submit-validate', [a, this, options, veto]);
+    if (veto.veto) {
+        log('ajaxSubmit: submit vetoed via form-submit-validate trigger');
+        return this;
+    }    
+
+    var q = $.param(a);
+
+    if (options.type.toUpperCase() == 'GET') {
+        options.url += (options.url.indexOf('?') >= 0 ? '&' : '?') + q;
+        options.data = null;  // data is null for 'get'
+    }
+    else
+        options.data = q; // data is the query string for 'post'
+
+    var $form = this, callbacks = [];
+    if (options.resetForm) callbacks.push(function() { $form.resetForm(); });
+    if (options.clearForm) callbacks.push(function() { $form.clearForm(); });
+
+    // perform a load on the target only if dataType is not provided
+    if (!options.dataType && options.target) {
+        var oldSuccess = options.success || function(){};
+        callbacks.push(function(data) {
+            $(options.target).html(data).each(oldSuccess, arguments);
+        });
+    }
+    else if (options.success)
+        callbacks.push(options.success);
+
+    options.success = function(data, status) {
+        for (var i=0, max=callbacks.length; i < max; i++)
+            callbacks[i](data, status, $form);
+    };
+
+    // are there files to upload?
+    var files = $('input:file', this).fieldValue();
+    var found = false;
+    for (var j=0; j < files.length; j++)
+        if (files[j])
+            found = true;
+
+    // options.iframe allows user to force iframe mode
+   if (options.iframe || found) { 
+       // hack to fix Safari hang (thanks to Tim Molendijk for this)
+       // see:  http://groups.google.com/group/jquery-dev/browse_thread/thread/36395b7ab510dd5d
+       if ($.browser.safari && options.closeKeepAlive)
+           $.get(options.closeKeepAlive, fileUpload);
+       else
+           fileUpload();
+       }
+   else
+       $.ajax(options);
+
+    // fire 'notify' event
+    this.trigger('form-submit-notify', [this, options]);
+    return this;
+
+
+    // private function for handling file uploads (hat tip to YAHOO!)
+    function fileUpload() {
+        var form = $form[0];
+        var opts = $.extend({}, $.ajaxSettings, options);
+
+        var id = 'jqFormIO' + (new Date().getTime());
+        var $io = $('<iframe id="' + id + '" name="' + id + '" />');
+        var io = $io[0];
+
+        if ($.browser.msie || $.browser.opera) 
+            io.src = 'javascript:false;document.write("");';
+        $io.css({ position: 'absolute', top: '-1000px', left: '-1000px' });
+
+        var xhr = { // mock object
+            responseText: null,
+            responseXML: null,
+            status: 0,
+            statusText: 'n/a',
+            getAllResponseHeaders: function() {},
+            getResponseHeader: function() {},
+            setRequestHeader: function() {}
+        };
+
+        var g = opts.global;
+        // trigger ajax global events so that activity/block indicators work like normal
+        if (g && ! $.active++) $.event.trigger("ajaxStart");
+        if (g) $.event.trigger("ajaxSend", [xhr, opts]);
+
+        var cbInvoked = 0;
+        var timedOut = 0;
+
+        // take a breath so that pending repaints get some cpu time before the upload starts
+        setTimeout(function() {
+            // make sure form attrs are set
+            var t = $form.attr('target'), a = $form.attr('action');
+            $form.attr({
+                target:   id,
+                encoding: 'multipart/form-data',
+                enctype:  'multipart/form-data',
+                method:   'POST',
+                action:   opts.url
+            });
+
+            // support timout
+            if (opts.timeout)
+                setTimeout(function() { timedOut = true; cb(); }, opts.timeout);
+
+            // add "extra" data to form if provided in options
+            var extraInputs = [];
+            try {
+                if (options.extraData)
+                    for (var n in options.extraData)
+                        extraInputs.push(
+                            $('<input type="hidden" name="'+n+'" value="'+options.extraData[n]+'" />')
+                                .appendTo(form)[0]);
+            
+                // add iframe to doc and submit the form
+                $io.appendTo('body');
+                io.attachEvent ? io.attachEvent('onload', cb) : io.addEventListener('load', cb, false);
+                form.submit();
+            }
+            finally {
+                // reset attrs and remove "extra" input elements
+                $form.attr('action', a);
+                t ? $form.attr('target', t) : $form.removeAttr('target');
+                $(extraInputs).remove();
+            }
+        }, 10);
+
+        function cb() {
+            if (cbInvoked++) return;
+            
+            io.detachEvent ? io.detachEvent('onload', cb) : io.removeEventListener('load', cb, false);
+
+            var operaHack = 0;
+            var ok = true;
+            try {
+                if (timedOut) throw 'timeout';
+                // extract the server response from the iframe
+                var data, doc;
+
+                doc = io.contentWindow ? io.contentWindow.document : io.contentDocument ? io.contentDocument : io.document;
+                
+                if (doc.body == null && !operaHack && $.browser.opera) {
+                    // In Opera 9.2.x the iframe DOM is not always traversable when
+                    // the onload callback fires so we give Opera 100ms to right itself
+                    operaHack = 1;
+                    cbInvoked--;
+                    setTimeout(cb, 100);
+                    return;
+                }
+                
+                xhr.responseText = doc.body ? doc.body.innerHTML : null;
+                xhr.responseXML = doc.XMLDocument ? doc.XMLDocument : doc;
+                xhr.getResponseHeader = function(header){
+                    var headers = {'content-type': opts.dataType};
+                    return headers[header];
+                };
+
+                if (opts.dataType == 'json' || opts.dataType == 'script') {
+                    var ta = doc.getElementsByTagName('textarea')[0];
+                    xhr.responseText = ta ? ta.value : xhr.responseText;
+                }
+                else if (opts.dataType == 'xml' && !xhr.responseXML && xhr.responseText != null) {
+                    xhr.responseXML = toXml(xhr.responseText);
+                }
+                data = $.httpData(xhr, opts.dataType);
+            }
+            catch(e){
+                ok = false;
+                $.handleError(opts, xhr, 'error', e);
+            }
+
+            // ordering of these callbacks/triggers is odd, but that's how $.ajax does it
+            if (ok) {
+                opts.success(data, 'success');
+                if (g) $.event.trigger("ajaxSuccess", [xhr, opts]);
+            }
+            if (g) $.event.trigger("ajaxComplete", [xhr, opts]);
+            if (g && ! --$.active) $.event.trigger("ajaxStop");
+            if (opts.complete) opts.complete(xhr, ok ? 'success' : 'error');
+
+            // clean up
+            setTimeout(function() {
+                $io.remove();
+                xhr.responseXML = null;
+            }, 100);
+        };
+
+        function toXml(s, doc) {
+            if (window.ActiveXObject) {
+                doc = new ActiveXObject('Microsoft.XMLDOM');
+                doc.async = 'false';
+                doc.loadXML(s);
+            }
+            else
+                doc = (new DOMParser()).parseFromString(s, 'text/xml');
+            return (doc && doc.documentElement && doc.documentElement.tagName != 'parsererror') ? doc : null;
+        };
+    };
+};
+
+/**
+ * ajaxForm() provides a mechanism for fully automating form submission.
+ *
+ * The advantages of using this method instead of ajaxSubmit() are:
+ *
+ * 1: This method will include coordinates for <input type="image" /> elements (if the element
+ *    is used to submit the form).
+ * 2. This method will include the submit element's name/value data (for the element that was
+ *    used to submit the form).
+ * 3. This method binds the submit() method to the form for you.
+ *
+ * The options argument for ajaxForm works exactly as it does for ajaxSubmit.  ajaxForm merely
+ * passes the options argument along after properly binding events for submit elements and
+ * the form itself.
+ */ 
+$.fn.ajaxForm = function(options) {
+    return this.ajaxFormUnbind().bind('submit.form-plugin',function() {
+        $(this).ajaxSubmit(options);
+        return false;
+    }).each(function() {
+        // store options in hash
+        $(":submit,input:image", this).bind('click.form-plugin',function(e) {
+            var $form = this.form;
+            $form.clk = this;
+            if (this.type == 'image') {
+                if (e.offsetX != undefined) {
+                    $form.clk_x = e.offsetX;
+                    $form.clk_y = e.offsetY;
+                } else if (typeof $.fn.offset == 'function') { // try to use dimensions plugin
+                    var offset = $(this).offset();
+                    $form.clk_x = e.pageX - offset.left;
+                    $form.clk_y = e.pageY - offset.top;
+                } else {
+                    $form.clk_x = e.pageX - this.offsetLeft;
+                    $form.clk_y = e.pageY - this.offsetTop;
+                }
+            }
+            // clear form vars
+            setTimeout(function() { $form.clk = $form.clk_x = $form.clk_y = null; }, 10);
+        });
+    });
+};
+
+// ajaxFormUnbind unbinds the event handlers that were bound by ajaxForm
+$.fn.ajaxFormUnbind = function() {
+    this.unbind('submit.form-plugin');
+    return this.each(function() {
+        $(":submit,input:image", this).unbind('click.form-plugin');
+    });
+
+};
+
+/**
+ * formToArray() gathers form element data into an array of objects that can
+ * be passed to any of the following ajax functions: $.get, $.post, or load.
+ * Each object in the array has both a 'name' and 'value' property.  An example of
+ * an array for a simple login form might be:
+ *
+ * [ { name: 'username', value: 'jresig' }, { name: 'password', value: 'secret' } ]
+ *
+ * It is this array that is passed to pre-submit callback functions provided to the
+ * ajaxSubmit() and ajaxForm() methods.
+ */
+$.fn.formToArray = function(semantic) {
+    var a = [];
+    if (this.length == 0) return a;
+
+    var form = this[0];
+    var els = semantic ? form.getElementsByTagName('*') : form.elements;
+    if (!els) return a;
+    for(var i=0, max=els.length; i < max; i++) {
+        var el = els[i];
+        var n = el.name;
+        if (!n) continue;
+
+        if (semantic && form.clk && el.type == "image") {
+            // handle image inputs on the fly when semantic == true
+            if(!el.disabled && form.clk == el)
+                a.push({name: n+'.x', value: form.clk_x}, {name: n+'.y', value: form.clk_y});
+            continue;
+        }
+
+        var v = $.fieldValue(el, true);
+        if (v && v.constructor == Array) {
+            for(var j=0, jmax=v.length; j < jmax; j++)
+                a.push({name: n, value: v[j]});
+        }
+        else if (v !== null && typeof v != 'undefined')
+            a.push({name: n, value: v});
+    }
+
+    if (!semantic && form.clk) {
+        // input type=='image' are not found in elements array! handle them here
+        var inputs = form.getElementsByTagName("input");
+        for(var i=0, max=inputs.length; i < max; i++) {
+            var input = inputs[i];
+            var n = input.name;
+            if(n && !input.disabled && input.type == "image" && form.clk == input)
+                a.push({name: n+'.x', value: form.clk_x}, {name: n+'.y', value: form.clk_y});
+        }
+    }
+    return a;
+};
+
+/**
+ * Serializes form data into a 'submittable' string. This method will return a string
+ * in the format: name1=value1&amp;name2=value2
+ */
+$.fn.formSerialize = function(semantic) {
+    //hand off to jQuery.param for proper encoding
+    return $.param(this.formToArray(semantic));
+};
+
+/**
+ * Serializes all field elements in the jQuery object into a query string.
+ * This method will return a string in the format: name1=value1&amp;name2=value2
+ */
+$.fn.fieldSerialize = function(successful) {
+    var a = [];
+    this.each(function() {
+        var n = this.name;
+        if (!n) return;
+        var v = $.fieldValue(this, successful);
+        if (v && v.constructor == Array) {
+            for (var i=0,max=v.length; i < max; i++)
+                a.push({name: n, value: v[i]});
+        }
+        else if (v !== null && typeof v != 'undefined')
+            a.push({name: this.name, value: v});
+    });
+    //hand off to jQuery.param for proper encoding
+    return $.param(a);
+};
+
+/**
+ * Returns the value(s) of the element in the matched set.  For example, consider the following form:
+ *
+ *  <form><fieldset>
+ *      <input name="A" type="text" />
+ *      <input name="A" type="text" />
+ *      <input name="B" type="checkbox" value="B1" />
+ *      <input name="B" type="checkbox" value="B2"/>
+ *      <input name="C" type="radio" value="C1" />
+ *      <input name="C" type="radio" value="C2" />
+ *  </fieldset></form>
+ *
+ *  var v = $(':text').fieldValue();
+ *  // if no values are entered into the text inputs
+ *  v == ['','']
+ *  // if values entered into the text inputs are 'foo' and 'bar'
+ *  v == ['foo','bar']
+ *
+ *  var v = $(':checkbox').fieldValue();
+ *  // if neither checkbox is checked
+ *  v === undefined
+ *  // if both checkboxes are checked
+ *  v == ['B1', 'B2']
+ *
+ *  var v = $(':radio').fieldValue();
+ *  // if neither radio is checked
+ *  v === undefined
+ *  // if first radio is checked
+ *  v == ['C1']
+ *
+ * The successful argument controls whether or not the field element must be 'successful'
+ * (per http://www.w3.org/TR/html4/interact/forms.html#successful-controls).
+ * The default value of the successful argument is true.  If this value is false the value(s)
+ * for each element is returned.
+ *
+ * Note: This method *always* returns an array.  If no valid value can be determined the
+ *       array will be empty, otherwise it will contain one or more values.
+ */
+$.fn.fieldValue = function(successful) {
+    for (var val=[], i=0, max=this.length; i < max; i++) {
+        var el = this[i];
+        var v = $.fieldValue(el, successful);
+        if (v === null || typeof v == 'undefined' || (v.constructor == Array && !v.length))
+            continue;
+        v.constructor == Array ? $.merge(val, v) : val.push(v);
+    }
+    return val;
+};
+
+/**
+ * Returns the value of the field element.
+ */
+$.fieldValue = function(el, successful) {
+    var n = el.name, t = el.type, tag = el.tagName.toLowerCase();
+    if (typeof successful == 'undefined') successful = true;
+
+    if (successful && (!n || el.disabled || t == 'reset' || t == 'button' ||
+        (t == 'checkbox' || t == 'radio') && !el.checked ||
+        (t == 'submit' || t == 'image') && el.form && el.form.clk != el ||
+        tag == 'select' && el.selectedIndex == -1))
+            return null;
+
+    if (tag == 'select') {
+        var index = el.selectedIndex;
+        if (index < 0) return null;
+        var a = [], ops = el.options;
+        var one = (t == 'select-one');
+        var max = (one ? index+1 : ops.length);
+        for(var i=(one ? index : 0); i < max; i++) {
+            var op = ops[i];
+            if (op.selected) {
+                // extra pain for IE...
+                var v = $.browser.msie && !(op.attributes['value'].specified) ? op.text : op.value;
+                if (one) return v;
+                a.push(v);
+            }
+        }
+        return a;
+    }
+    return el.value;
+};
+
+/**
+ * Clears the form data.  Takes the following actions on the form's input fields:
+ *  - input text fields will have their 'value' property set to the empty string
+ *  - select elements will have their 'selectedIndex' property set to -1
+ *  - checkbox and radio inputs will have their 'checked' property set to false
+ *  - inputs of type submit, button, reset, and hidden will *not* be effected
+ *  - button elements will *not* be effected
+ */
+$.fn.clearForm = function() {
+    return this.each(function() {
+        $('input,select,textarea', this).clearFields();
+    });
+};
+
+/**
+ * Clears the selected form elements.
+ */
+$.fn.clearFields = $.fn.clearInputs = function() {
+    return this.each(function() {
+        var t = this.type, tag = this.tagName.toLowerCase();
+        if (t == 'text' || t == 'password' || tag == 'textarea')
+            this.value = '';
+        else if (t == 'checkbox' || t == 'radio')
+            this.checked = false;
+        else if (tag == 'select')
+            this.selectedIndex = -1;
+    });
+};
+
+/**
+ * Resets the form data.  Causes all form elements to be reset to their original value.
+ */
+$.fn.resetForm = function() {
+    return this.each(function() {
+        // guard against an input with the name of 'reset'
+        // note that IE reports the reset function as an 'object'
+        if (typeof this.reset == 'function' || (typeof this.reset == 'object' && !this.reset.nodeType))
+            this.reset();
+    });
+};
+
+/**
+ * Enables or disables any matching elements.
+ */
+$.fn.enable = function(b) { 
+    if (b == undefined) b = true;
+    return this.each(function() { 
+        this.disabled = !b 
+    });
+};
+
+/**
+ * Checks/unchecks any matching checkboxes or radio buttons and
+ * selects/deselects and matching option elements.
+ */
+$.fn.select = function(select) {
+    if (select == undefined) select = true;
+    return this.each(function() { 
+        var t = this.type;
+        if (t == 'checkbox' || t == 'radio')
+            this.checked = select;
+        else if (this.tagName.toLowerCase() == 'option') {
+            var $sel = $(this).parent('select');
+            if (select && $sel[0] && $sel[0].type == 'select-one') {
+                // deselect all other options
+                $sel.find('option').select(false);
+            }
+            this.selected = select;
+        }
+    });
+};
+
+// helper fn for console logging
+// set $.fn.ajaxSubmit.debug to true to enable debug logging
+function log() {
+    if ($.fn.ajaxSubmit.debug && window.console && window.console.log)
+        window.console.log('[jquery.form] ' + Array.prototype.join.call(arguments,''));
+};
+
+})(jQuery);
+
+/* Copyright (c) 2007 Brandon Aaron (brandon.aaron@gmail.com || http://brandonaaron.net)
+ * Dual licensed under the MIT (http://www.opensource.org/licenses/mit-license.php) 
+ * and GPL (http://www.opensource.org/licenses/gpl-license.php) licenses.
+ *
+ * Version: 1.0.2
+ * Requires jQuery 1.1.3+
+ * Docs: http://docs.jquery.com/Plugins/livequery
+ */
+eval(function(p,a,c,k,e,r){e=function(c){return(c<a?'':e(parseInt(c/a)))+((c=c%a)>35?String.fromCharCode(c+29):c.toString(36))};if(!''.replace(/^/,String)){while(c--)r[e(c)]=k[c]||e(c);k=[function(e){return r[e]}];e=function(){return'\\w+'};c=1};while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);return p}('(4($){$.R($.7,{3:4(c,b,d){9 e=2,q;5($.O(c))d=b,b=c,c=z;$.h($.3.j,4(i,a){5(e.8==a.8&&e.g==a.g&&c==a.m&&(!b||b.$6==a.7.$6)&&(!d||d.$6==a.o.$6))l(q=a)&&v});q=q||Y $.3(2.8,2.g,c,b,d);q.u=v;$.3.s(q.F);l 2},T:4(c,b,d){9 e=2;5($.O(c))d=b,b=c,c=z;$.h($.3.j,4(i,a){5(e.8==a.8&&e.g==a.g&&(!c||c==a.m)&&(!b||b.$6==a.7.$6)&&(!d||d.$6==a.o.$6)&&!2.u)$.3.y(a.F)});l 2}});$.3=4(e,c,a,b,d){2.8=e;2.g=c||S;2.m=a;2.7=b;2.o=d;2.t=[];2.u=v;2.F=$.3.j.K(2)-1;b.$6=b.$6||$.3.I++;5(d)d.$6=d.$6||$.3.I++;l 2};$.3.p={y:4(){9 b=2;5(2.m)2.t.16(2.m,2.7);E 5(2.o)2.t.h(4(i,a){b.o.x(a)});2.t=[];2.u=Q},s:4(){5(2.u)l;9 b=2;9 c=2.t,w=$(2.8,2.g),H=w.11(c);2.t=w;5(2.m){H.10(2.m,2.7);5(c.C>0)$.h(c,4(i,a){5($.B(a,w)<0)$.Z.P(a,b.m,b.7)})}E{H.h(4(){b.7.x(2)});5(2.o&&c.C>0)$.h(c,4(i,a){5($.B(a,w)<0)b.o.x(a)})}}};$.R($.3,{I:0,j:[],k:[],A:v,D:X,N:4(){5($.3.A&&$.3.k.C){9 a=$.3.k.C;W(a--)$.3.j[$.3.k.V()].s()}},U:4(){$.3.A=v},M:4(){$.3.A=Q;$.3.s()},L:4(){$.h(G,4(i,n){5(!$.7[n])l;9 a=$.7[n];$.7[n]=4(){9 r=a.x(2,G);$.3.s();l r}})},s:4(b){5(b!=z){5($.B(b,$.3.k)<0)$.3.k.K(b)}E $.h($.3.j,4(a){5($.B(a,$.3.k)<0)$.3.k.K(a)});5($.3.D)1j($.3.D);$.3.D=1i($.3.N,1h)},y:4(b){5(b!=z)$.3.j[b].y();E $.h($.3.j,4(a){$.3.j[a].y()})}});$.3.L(\'1g\',\'1f\',\'1e\',\'1b\',\'1a\',\'19\',\'18\',\'17\',\'1c\',\'15\',\'1d\',\'P\');$(4(){$.3.M()});9 f=$.p.J;$.p.J=4(a,c){9 r=f.x(2,G);5(a&&a.8)r.g=a.g,r.8=a.8;5(14 a==\'13\')r.g=c||S,r.8=a;l r};$.p.J.p=$.p})(12);',62,82,'||this|livequery|function|if|lqguid|fn|selector|var|||||||context|each||queries|queue|return|type||fn2|prototype|||run|elements|stopped|false|els|apply|stop|undefined|running|inArray|length|timeout|else|id|arguments|nEls|guid|init|push|registerPlugin|play|checkQueue|isFunction|remove|true|extend|document|expire|pause|shift|while|null|new|event|bind|not|jQuery|string|typeof|toggleClass|unbind|addClass|removeAttr|attr|wrap|before|removeClass|empty|after|prepend|append|20|setTimeout|clearTimeout'.split('|'),0,{}));
+/*
+This is a highly modified version of the Facebox plugin for jQuery by Chris
+Wanstrath. Original Credits:
+ 
+Facebox (for jQuery)
+version: 1.0 (12/19/2007)
+@requires jQuery v1.2 or later
+Examples at http://famspam.com/facebox/
+Licensed under the MIT: http://www.opensource.org/licenses/mit-license.php
+Copyright 2007 Chris Wanstrath [ chris@ozmm.org ]
+*/
+
+(function($) {
+
+   // Allows generating a popup by jQuery.popup('contents')
+   $.popup = function(options, data) {
+      var settings = $.extend({}, $.popup.settings, options);
+      $.popup.init(settings)
+      if (!settings.confrm)
+         $.popup.loading(settings)
+
+      $.isFunction(data) ? data.call(this, settings) : $.popup.reveal(settings, data)
+   }
+
+   $.fn.popup = function(options) {
+      // IE7 or less gets no popups because they're jerks
+      if ($.browser.msie && parseInt($.browser.version, 10) < 8)
+         return false;
+   
+      // Merge the two settings arrays into a central data store
+      var settings = $.extend({}, $.popup.settings, options);
+      var sender = this;
+
+      this.live('click', function() {
+         settings.sender = this;
+         $.extend(settings, { popupType: $(this).attr('popupType') });
+
+         $.popup.init(settings);
+         if (!settings.confirm)
+            $.popup.loading(settings);
+
+         var target = $.popup.findTarget(settings);
+         if (settings.confirm) {
+            // Bind to the "Okay" button click
+            $('#'+settings.popupId+' .Okay').focus().click(function() {
+               if (settings.followConfirm) {
+                  // follow the target
+                  document.location = target;
+               } else {
+                  // request the target via ajax
+                  $.ajax({
+                     type: "GET",
+                     url: target,
+                     data: {'DeliveryType' : settings.deliveryType, 'DeliveryMethod' : 'JSON'},
+                     dataType: 'json',
+                     error: function(XMLHttpRequest, textStatus, errorThrown) {
+                        $.popup({}, XMLHttpRequest.responseText);
+                     },
+                     success: function(json) {
+                        json = $.postParseJson(json);
+
+                        $.popup.close(settings);
+                        settings.afterConfirm(json, settings.sender);
+                        gdn.inform(json);
+                        if (json.RedirectUrl)
+                           setTimeout(function() { document.location.replace(json.RedirectUrl); }, 300);
+                     }
+                  });
+               }
+            });
+         } else {
+            if (target) {
+               $.ajax({
+                  type: 'GET',
+                  url: target,
+                  data: {
+                     'DeliveryType': settings.deliveryType 
+                  },
+                  error: function(request, textStatus, errorThrown) {
+                     $.popup.reveal(settings, request.responseText);
+                  },
+                  success: function(data) {
+                     $.popup.reveal(settings, data);
+                  }
+               });
+//          $.get(target, {'DeliveryType': settings.deliveryType}, function(data) {
+//            $.popup.reveal(settings, data)
+//          });
+            }
+         }
+        
+         return false;
+      });
+    
+      this.mouseover(function() {
+         settings.sender = this;
+         if ($.popup.findTarget(settings))
+            $(this).addClass(settings.mouseoverClass);
+      });
+    
+      this.mouseout(function() {
+         settings.sender = this;
+         if ($.popup.findTarget(settings))
+            $(this).removeClass(settings.mouseoverClass);
+      });
+    
+      return this;
+   }
+  
+   $.popup.findTarget = function(settings) {
+      settings.foundTarget = settings.targetUrl;
+    
+      // See if the matched element was an anchor. If it was, use the href.
+      if (!settings.foundTarget && $(settings.sender).attr('href') != 'undefined') {
+         settings.foundTarget = settings.sender.href;
+      } else {
+         // See if there were any anchors within the matched element.
+         // If there are, use the href from the first one.
+         if (!settings.foundTarget) {
+            var anchor = $(settings.sender).find('a:first');
+            if (anchor.length > 0)
+               settings.foundTarget = anchor[0].href;
+         }
+      }
+    
+      return settings.foundTarget;
+   }
+
+   // Close a jquery popup and release escape key bindings
+   $.popup.close = function(settings, response) {
+      $(document).unbind('keydown.popup');
+      $('#'+settings.popupId).trigger('popupClose');
+      $('.Overlay').remove();
+    
+      return false;
+   }
+    
+   $.popup.init = function(settings) {
+      // Define a unique identifier for this popup
+      var i = 1;
+      var popupId = 'Popup';
+      while ($('#'+popupId).size() > 0) {
+         popupId = 'Popup'+i;
+         i++;
+      }
+      settings.popupId = popupId;
+      var popupHtml = '';
+      if (!settings.confirm)
+         popupHtml = settings.popupHtml;
+      else
+         popupHtml = settings.confirmHtml;
+    
+      popupHtml = popupHtml.replace('{popup.id}', settings.popupId);
+    
+      $('body').append(popupHtml);
+      if (settings.containerCssClass != '')
+         $('#'+settings.popupId).addClass(settings.containerCssClass);
+      
+      var pagesize = $.popup.getPageSize();
+      $('div.Overlay').css({height: pagesize[1]});
+    
+      var pagePos = $.popup.getPagePosition();
+      $('#'+settings.popupId).css({
+         top: pagePos.top,
+         left: pagePos.left
+      });
+      $('#'+settings.popupId).show();
+
+      $(document).bind('keydown.popup', function(e) {
+         if (e.keyCode == 27)
+            $.popup.close(settings);
+      })    
+
+      if (settings.onUnload) {
+         $('#'+settings.popupId).bind('popupClose',function(){
+            setTimeout(settings.onUnload,1);
+         });
+      }
+
+      // Replace language definitions
+      if (!settings.confirm) {
+         $('#'+settings.popupId+' .Close').click(function() {
+            return $.popup.close(settings);
+         });
+      } else {
+         $('#'+settings.popupId+' .Content h1').text(gdn.definition('ConfirmHeading', 'Confirm'));
+         $('#'+settings.popupId+' .Content p').text(gdn.definition('ConfirmText', 'Are you sure you want to do that?'));
+         $('#'+settings.popupId+' .Okay').val(gdn.definition('Okay', 'Okay'));
+         $('#'+settings.popupId+' .Cancel').val(gdn.definition('Cancel', 'Cancel')).click(function() {
+            $.popup.close(settings);
+         });
+      }
+   }
+
+   $.popup.loading = function(settings) {
+      settings.onLoad(settings);
+      if ($('#'+settings.popupId+' .Loading').length == 1)
+         return true;
+    
+      $('#'+settings.popupId+' .Content').empty();
+      $('#'+settings.popupId+' .Body').children().hide().end().append('<div class="Loading">&#160;</div>');
+   }
+  
+   $.popup.reveal = function(settings, data) {
+      // First see if we've retrieved json or something else
+      var json = false;
+      if (data instanceof Array) {
+         json = false;
+      } else if (data !== null && typeof(data) == 'object') {
+         json = data;
+      }
+
+      if (json == false) {
+         // This is something other than json, so just put it into the popup directly
+         $('#'+settings.popupId+' .Content').append(data);
+      } else {
+         gdn.inform(json);
+         formSaved = json['FormSaved'];
+         data = json['Data'];
+
+         // Add any js that's come in.
+         $(json.js).each(function(i, el){
+            var v_js  = document.createElement('script');
+            v_js.type = 'text/javascript';
+            v_js.src = gdn.url(el);
+            document.getElementsByTagName('head')[0].appendChild(v_js);
+         });
+
+         // mosullivan - need to always reload the data b/c when uninviting ppl
+         // we need to reload the invitation table. Is there a reason not to reload
+         // the content?
+         // if (formSaved == false)
+         $('#'+settings.popupId+' .Content').html(data);
+      }
+    
+      $('#'+settings.popupId+' .Loading').remove();
+      $('#'+settings.popupId+' .Body').children().fadeIn('normal');
+
+      settings.afterLoad();
+    
+      // Now, if there are any forms in the popup, hijack them if necessary.
+      if (settings.hijackForms == true) {
+         $('#'+settings.popupId+' form').ajaxForm({
+            data: {
+                'DeliveryType': settings.deliveryType,
+                'DeliveryMethod': 'JSON'
+            },
+            dataType: 'json',
+            beforeSubmit: function() {
+               settings.onSave(settings); // Notify the user that it is being saved.
+            },  
+            success: function(json) {
+               json = $.postParseJson(json);
+               gdn.inform(json);
+
+               if (json.FormSaved == true) {
+                  if (json.RedirectUrl)
+                     setTimeout(function() { document.location.replace(json.RedirectUrl); }, 300);
+
+                  settings.afterSuccess(settings, json);
+                  $.popup.close(settings, json);
+               } else {
+                  $.popup.reveal(settings, json) // Setup the form again
+               }
+            }
+         });
+
+
+         // Hijack links to navigate within the same popup.
+         $('#'+settings.popupId+' .PopLink').click(function() {
+            $.popup.loading(settings);
+
+            // Ajax the link into the current popup.
+            $.get($(this).attr('href'), {'DeliveryType': settings.deliveryType}, function(data, textStatus, xhr) {
+               if (typeof(data) == 'object') {
+                  if (data.RedirectUrl)
+                     setTimeout(function() { document.location.replace(data.RedirectUrl); }, 300);
+
+                  $.postParseJson(data);
+               }
+               $.popup.reveal(settings, data);
+               //$('#'+settings.popupId+' .Content').html(data);
+            });
+
+            return false;
+         });
+      }
+    
+      // If there is a cancel button in the popup, hide it (the popup has it's own close button)
+      $('#'+settings.popupId+' a.Cancel').hide();
+
+      // Trigger an even that plugins can attach to when popups are revealed.
+      $('body').trigger('popupReveal');
+
+      return false;
+   }
+  
+   $.popup.settings = {
+      targetUrl:        false,        // Use this URL instead of one provided by the matched element?
+      confirm:          false,        // Pop up a confirm message?
+      followConfirm:    false,        // Follow the confirm url after OK, or request it with ajax?
+      afterConfirm:     function(json, sender) {
+         // Called after the confirm url has been loaded via ajax
+      },                              // Event to fire if the confirm was ajaxed
+      hijackForms:      true,         // Hijack popup forms so they are handled in-page instead of posting the entire page back
+      deliveryType:     'VIEW',            // Adds DeliveryType=3 to url so Garden doesn't pull the entire page
+      mouseoverClass:   'Popable',    // CssClass to be applied to a popup link when hovering
+      onSave:           function(settings) {
+         if (settings.sender) {
+            $('#'+settings.popupId+' .Button:last').attr('disabled', true);
+            $('#'+settings.popupId+' .Button:last').after('<span class="Progress">&#160;</span>');
+         }
+      },
+      onLoad:           function(settings) {
+         // Called before the "loading..." is displayed
+      },
+      onUnload:         function(settings, response) {
+         // Called after the popup is closed
+      },
+      afterSuccess:     function() {
+         // Called after an ajax request resulted in success, and before "close" is called.
+      },
+      containerCssClass: '',
+      popupHtml:       '\
+  <div class="Overlay"> \
+    <div id="{popup.id}" class="Popup"> \
+      <div class="Border"> \
+        <div class="Body"> \
+          <div class="Content"> \
+          </div> \
+          <div class="Footer"> \
+            <a href="#" class="Close"><span>&#x00d7;</span></a> \
+          </div> \
+        </div> \
+      </div> \
+    </div> \
+  </div>',
+      confirmHtml:       '\
+  <div class="Overlay"> \
+    <div id="{popup.id}" class="Popup"> \
+      <div class="Border"> \
+        <div class="Body"> \
+          <div class="Content"><h1>Confirm</h1><p>Are you sure you want to do that?</p></div> \
+          <div class="Footer"> \
+            <input type="button" class="Button Okay" value="Okay" /> \
+            <input type="button" class="Button Cancel" value="Cancel" /> \
+          </div> \
+        </div> \
+      </div> \
+    </div> \
+  </div>',
+      afterLoad: function() {}
+   }
+
+   $.popup.inFrame = function() {
+      try {
+         if (top !== self && $(parent.document).width())
+            return true;
+      } catch(e) { }
+    
+      return false;
+   }
+  
+   $.popup.getPageSize = function() {
+      var inFrame = $.popup.inFrame();
+      var doc = $(inFrame ? parent.document : document);
+      var win = $(inFrame ? parent.window : window);
+      arrayPageSize = new Array(
+         $(doc).width(),
+         $(doc).height(),
+         $(win).width(),
+         $(win).height()
+      );
+      return arrayPageSize;
+   };
+  
+   $.popup.getPagePosition = function() {
+      var inFrame = $.popup.inFrame();
+      var doc = $(inFrame ? parent.document : document);
+      var win = $(inFrame ? parent.window : window);
+      var scroll = { 'top':doc.scrollTop(), 'left':doc.scrollLeft() };
+      var t = scroll.top + ($(win).height() / 10);
+      if (inFrame) {
+         var el = $(parent.document).find('iframe[id^=vanilla]');
+         el = el ? el : $(document); // Just in case iframe is not id'd properly
+         t -= (el.offset().top);
+         // Don't slide above or below the frame bounds.
+         var diff = $(doc).height() - $(document).height();
+         var maxOffset = $(document).height() - diff;
+         if (t < 0) {
+            t = 0;
+         } else if (t > maxOffset) {
+            t = maxOffset;
+         }
+      }
+      return {'top':t, 'left':scroll.left};
+   };
+
+})(jQuery);
+
 /*
     http://www.JSON.org/json2.js
     2011-02-23
@@ -3669,8 +6188,8 @@ var $body    = $('body'),
 
 module.exports = BaseAppView.extend({
 	events : {
-		"click .forums-link"              : "enableLoading",
-		"click .navbar-fixed-top .nav li" : "switchNav"
+		"click .forums-link"  : "enableLoading",
+		"click #main-menu li" : "switchNav"
 	},
 	postInitialize : function() {
 		this.app.on('change:loading', function(app, loading) {

@@ -6,34 +6,44 @@
 		<title>Proto</title>
 
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<link href="/applications/dashboard/design/style.css?v=2.0.18.8" media="all" rel="stylesheet" type="text/css" />
+		<link rel="stylesheet" type="text/css" href="/themes/proto/design/style.css?v=2.0.18.8" media="all" />
 		<link href="/styles.css" media="screen" rel="stylesheet" type="text/css" />
 	</head>
 
 	<body class="">
-		<div class="navbar navbar-fixed-top">
-			<div class="navbar-inner">
-				<div class="container">
-					<a class="brand" href="/">Proto</a>
-					<div class="nav-collapse collapse">
-						<ul class="nav">
-							<li class="active"><a href="/">Home</a></li>
-							{{! Use a "." relative path to defeat push state. }}
-							<li><a href="./discussions" class="forums-link">Forums</a></li>
-						</ul>
-						<img class="loading-indicator" src="/images/ajax-loader.gif" alt="Loading..." />
-						<ul class="nav pull-right">
-							<li class="divider-vertical"></li>
-							<li><a href="/entry/signin" class="SignInPopup">Sign In</a></li>
-						</ul>
+		<div class="proto">
+			<div class="navbar navbar-inverse navbar-fixed-top">
+				<div class="navbar-inner">
+					<div class="container">
+						<a class="brand" href="/">Proto</a>
+						<div class="nav-collapse collapse">
+							<ul class="nav" id="main-menu">
+								<li class="active"><a href="/">Home</a></li>
+								{{! Use a "." relative path to defeat push state. }}
+								<li><a href="./discussions" class="forums-link">Forums</a></li>
+							</ul>
+							<img class="loading-indicator" src="/images/ajax-loader.gif" alt="Loading..." />
+							<ul class="nav pull-right">
+								<li class="divider-vertical"></li>
+								<li>
+								{{#if this._app.attributes.user.authenticated}}
+									<a href="./entry/signout?TransientKey={{this._app.attributes.user.transientKey}}">
+										Sign out
+									</a>
+								{{else}}
+									<a href="./entry/signin" class="SignInPopup">Sign In</a>
+								{{/if}}
+								</li>
+							</ul>
+						</div>
 					</div>
 				</div>
 			</div>
+	
+			<section id=content class=container>
+				{{{body}}}
+			</section>
 		</div>
-
-		<section id=content class=container>
-			{{{body}}}
-		</section>
 
 		<script src="/mergedAssets.js"></script>
 		<script>

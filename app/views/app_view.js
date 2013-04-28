@@ -5,16 +5,13 @@ var $body    = $('body'),
 
 module.exports = BaseAppView.extend({
 	events : {
-		"click .forums-link"              : "enableLoading",
-		"click .navbar-fixed-top .nav li" : "switchNav"
+		"click .forums-link"  : "enableLoading",
+		"click #main-menu li" : "switchNav"
 	},
 	postInitialize : function() {
 		this.app.on('change:loading', function(app, loading) {
 			$body.toggleClass('loading', loading);
 		}, this);
-		if ($.fn.popup) {
-			$('.SignInPopup').popup({ containerCssClass : 'SignInPopup' });
-		}
 	},
 	enableLoading : function (e) {
 		$loading.show();
