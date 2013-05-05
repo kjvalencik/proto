@@ -6,13 +6,26 @@
 		<title>Proto</title>
 
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<link rel="stylesheet" type="text/css" href="/themes/proto/design/style.css?v=2.0.18.8" media="all" />
+		<link rel="stylesheet" type="text/css" href="/applications/dashboard/design/style.css?v=2.1b1.17" media="all" />
 		<link href="/styles.css" media="screen" rel="stylesheet" type="text/css" />
 	</head>
 
 	<body class="">
 		<div class="proto">
-			<div class="navbar navbar-inverse navbar-fixed-top">
+			<div id="follow-bar">
+				<div class="container">
+					<div class="teamspeak pull-left">
+						<img src="//www.teamspeak.com/media_repository/files/mediakit/buttons/button01_88x31.gif" />
+						<div></div>
+					</div>
+					<div class="pull-right">
+						Follow us on
+						<img src="//www.facebookbrand.com/img/assets/asset.f.logo.lg.png" />
+						<img src="//twitter.com/images/resources/twitter-bird-white-on-blue.png" />
+					</div>
+				</div>
+			</div>
+			<div id="navbar" class="navbar navbar-fixed-top">
 				<div class="navbar-inner">
 					<div class="container">
 						<a class="brand" href="/">Proto</a>
@@ -40,9 +53,14 @@
 				</div>
 			</div>
 	
-			<section id=content class=container>
+			<section id="content" class="container">
 				{{{body}}}
 			</section>
+
+			<footer id="footer" class="container">
+				<hr />
+				<p>&copy; Prototype Gamer 2013</p>
+			</footer>
 		</div>
 
 		<script src="/mergedAssets.js"></script>

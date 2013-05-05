@@ -19,3 +19,40 @@
 .Overlay {
 	z-index: 1500;
 }
+
+#navbar {
+	top: 34px;
+}
+
+#follow-bar {
+	padding: 5px 0;
+	background: #fff;
+	position: fixed;
+	top: 0;
+	width: 100%;
+	z-index: 1029;
+}
+
+#follow-bar img {
+	margin-top: -2px;
+	height: 20px;
+	border-radius: 3px;
+}
+
+#follow-bar .teamspeak {
+	position: relative;
+	margin-top: -4px;
+}
+
+#follow-bar .teamspeak img {
+	height: 31px;
+	margin: 0;
+}
+
+#follow-bar .teamspeak div {
+	position: absolute;
+	border: 1px solid #fff;
+	height: 29px;
+	width: 86px;
+	top: 0;
+}

@@ -6202,6 +6202,16 @@ module.exports = BaseAppView.extend({
 	switchNav : function (e) {
 		$(e.currentTarget).addClass('active')
 			.siblings().removeClass('active');
+	},
+	// Make sure we only intercept clicks for relevent elements
+	shouldInterceptClick : function (href, el) {
+		var $el = $(el);
+		// Use the base click intercepter
+		return BaseAppView.shouldInterceptClick
+			// Make sure this don't have a don't intercept attr
+			&& ($el.attr('intercept') === false)
+			// Make sure this is in a "proto" section
+			&& ($el.parents('.proto').length > 0);
 	}
 });
 }, "app/views/base_view": function(exports, require, module) {var RendrView = require('rendr/shared/base/view');
