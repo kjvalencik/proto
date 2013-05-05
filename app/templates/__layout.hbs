@@ -7,13 +7,14 @@
 
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<link rel="stylesheet" type="text/css" href="/applications/dashboard/design/style.css?v=2.1b1.17" media="all" />
+		<link rel="stylesheet" type="text/css" href="/themes/proto/design/custom.css?v=0.1" media="all" />
 		<link href="/styles.css" media="screen" rel="stylesheet" type="text/css" />
 	</head>
 
 	<body class="">
 		<div class="proto">
-			<div id="follow-bar">
-				<div class="container">
+			<div class="container">
+				<div id="follow-bar">
 					<div class="teamspeak pull-left">
 						<img src="//www.teamspeak.com/media_repository/files/mediakit/buttons/button01_88x31.gif" />
 						<div></div>
@@ -24,10 +25,8 @@
 						<img src="//twitter.com/images/resources/twitter-bird-white-on-blue.png" />
 					</div>
 				</div>
-			</div>
-			<div id="navbar" class="navbar navbar-fixed-top">
-				<div class="navbar-inner">
-					<div class="container">
+				<div id="navbar" class="navbar">
+					<div class="navbar-inner">
 						<a class="brand" href="/">Proto</a>
 						<div class="nav-collapse collapse">
 							<ul class="nav" id="main-menu">
@@ -51,16 +50,16 @@
 						</div>
 					</div>
 				</div>
-			</div>
+		
+				<section id="content">
+					{{{body}}}
+				</section>
 	
-			<section id="content" class="container">
-				{{{body}}}
-			</section>
-
-			<footer id="footer" class="container">
 				<hr />
-				<p>&copy; Prototype Gamer 2013</p>
-			</footer>
+				<footer id="footer">
+					<p>&copy; Prototype Gamer 2013</p>
+				</footer>
+			</div>
 		</div>
 
 		<script src="/mergedAssets.js"></script>
